@@ -1,0 +1,183 @@
+# 微信读书阅读机器人配置文件
+# https://github.com/funnyzak/weread-bot
+# 配置优先级：环境变量 > config.yaml > 默认值
+
+app:
+  # 启动模式：immediate(立即执行), scheduled(定时执行), daemon(守护进程)
+  startup_mode: "immediate"
+  # 单位（秒），启动随机延迟，随机启动时间，防止被识别，建议尽量设置大一些
+  startup_delay: "60-300"
+
+# CURL配置（支持单用户和多用户模式）
+curl_config:
+  # 单用户模式，从文件读取CURL bash命令
+  file_path: "curl_command.txt"
+
+  # 多用户模式（优先级高于单用户配置）
+  users:
+    - name: "user1"
+      file_path: "user1_curl.txt"
+      # 可选：用户特定的阅读参数覆盖
+      reading_overrides:
+        target_duration: "45-90"
+        mode: "smart_random"
+        reading_interval: "30-48"
+    
+    - name: "user2"
+      file_path: "user2_curl.txt"
+      reading_overrides:
+        target_duration: "30-60"
+        mode: "sequential"
+        reading_interval: "25-35"
+    
+    - name: "user3"
+      file_path: "user3_curl.txt"
+      # 不设置overrides则使用全局配置
+
+# 阅读配置（全局默认配置，可被用户特定配置覆盖）
+reading:
+  # 阅读模式：smart_random(智能随机), sequential(顺序), pure_random(纯随机)
+  mode: "smart_random"
+  # 目标阅读时长（分钟），支持区间随机。建议设置为45-90分钟，过长的阅读不符合人类阅读习惯
+  target_duration: "45-90"
+  # 每次阅读请求间隔（秒）
+  reading_interval: "30-48"
+  # 是否优先使用CURL数据
+  use_curl_data_first: true
+  # CURL数据无效时是否回退到配置
+  fallback_to_config: true
+  
+  # 书籍配置列表
+  books:
+    - name: "明朝那些事"                    # 书籍名称
+      book_id: "a57325c05c8ed3a57224187"  # 书籍ID
+      chapters:                          # 章节ID列表
+        - "9bf32f301f9bf31c7ff0a60"
+        - "c7432af0210c74d97b01b1c"
+    
+    - name: "长安的荔枝"
+      book_id: "cc932860813ab67c2g014597"
+      chapters:
+        - "b6d32b90216b6d767d2f0dc"
+  
+  # 智能随机模式配置
+  smart_random:
+    # 书籍连续性概率（0-1，越高越倾向于继续当前书籍）
+    book_continuity: 0.8
+    # 章节连续性概率（0-1，越高越倾向于顺序阅读章节）
+    chapter_continuity: 0.7
+    # 换书冷却时间（秒），人类阅读中换书频率较低
+    book_switch_cooldown: 3600
+
+# 人类行为模拟，如果希望快速完成阅读可关闭模拟
+human_simulation:
+  enabled: true
+  # 阅读速度是否变化
+  reading_speed_variation: true
+  # 中途休息概率（0-1）
+  break_probability: 0.1
+  # 休息时长（秒）
+  break_duration: "5-20"
+  # User-Agent轮换（会话级别，非请求级别），建议不轮换，默认使用 curl 自带的 User-Agent
+  rotate_user_agent: false
+
+# 网络配置
+network:
+  timeout: 30
+  retry_times: 3
+  retry_delay: "5-15"  # 重试延迟（秒）
+  # 请求频率控制（请求/分钟）
+  rate_limit: 10
+
+# 通知配置
+notification:
+  enabled: true
+  # 是否包含详细统计
+  include_statistics: true
+  
+  # 通知通道配置（支持多个通道同时使用）
+  channels:
+    # 通道1：PushPlus
+    - name: "pushplus"
+      enabled: true
+      config:
+        token: "your_pushplus_token_here"
+    
+    # 通道2：Telegram
+    - name: "telegram"
+      enabled: true
+      config:
+        bot_token: "your_telegram_bot_token_here"
+        chat_id: "your_telegram_chat_id_here"
+        proxy:
+          http: "http://proxy_host:port"
+          https: "https://proxy_host:port"
+    
+    # 通道3：WxPusher
+    - name: "wxpusher"
+      enabled: false
+      config:
+        spt: "your_wxpusher_spt_here"
+    
+    # 通道4：Apprise
+    - name: "apprise"
+      enabled: false
+      config:
+        # Apprise通知URL，支持多种服务（如Discord、Slack、Email等）
+        # 示例：discord://webhook_id/webhook_token
+        # 示例：mailto://user:pass@domain.com
+        # 详见：https://github.com/caronc/apprise
+        url: "your_apprise_url_here"
+    
+    # 通道5：Bark
+    - name: "bark"
+      enabled: true
+      config:
+        # Bark服务器地址
+        server: "https://api.day.app"
+        # 设备Key
+        device_key: "your_bark_device_key_here"
+        # 通知音效（可选）
+        sound: "default"
+    
+    # 通道6：Ntfy
+    - name: "ntfy"
+      enabled: false
+      config:
+        # Ntfy服务器地址（默认：https://ntfy.sh）
+        server: "https://ntfy.sh"
+        # 主题名称
+        topic: "your_ntfy_topic_here"
+        # 访问令牌（可选，用于私有主题）
+        token: "your_ntfy_token_here"
+
+# 定时任务配置（仅在startup_mode为scheduled时生效）
+schedule:
+  enabled: false
+  # Cron表达式，支持简化格式
+  # 示例：
+  #   "0 */2 * * *"  - 每2小时执行一次
+  #   "30 9 * * *"   - 每天9:30执行
+  #   "0 * * * *"    - 每小时执行
+  cron_expression: "0 */2 * * *"
+  timezone: "Asia/Shanghai"
+
+# 守护进程配置（仅在startup_mode为daemon时生效）
+daemon:
+  enabled: false
+  # 会话间隔时间（分钟）
+  session_interval: "120-180"
+  # 每日最大会话数
+  max_daily_sessions: 12
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "detailed"  # simple, detailed, json
+  file: "logs/weread.log"
+  max_size: "10MB"
+  backup_count: 5
+  # 是否在控制台显示
+  console: true
+
+
