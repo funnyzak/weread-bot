@@ -47,7 +47,7 @@ pip install -r requirements.txt
 # 设置CURL命令文件路径（推荐）
 export WEREAD_CURL_BASH_FILE_PATH="curl_command.txt"
 # 或 设置 CURL命令字符串
-export WEREAD_CURL_STRING="yourcurl command"
+export WEREAD_CURL_STRING="curl 'https://weread.qq.com/web/book/read' -H 'cookie: wr_skey=user1_key; ...' --data-raw '{...}'"
 
 # 4. 可选配置
 export TARGET_DURATION="30-50"        # 目标阅读时长（分钟），此为 30 到 50 分钟随机
