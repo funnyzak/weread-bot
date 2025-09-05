@@ -47,9 +47,18 @@ reading:
   # CURL数据无效时是否回退到配置
   fallback_to_config: true
   
-  # 书籍章节关联配置（书籍ID: [章节ID列表]）
+  # 书籍配置列表
   books:
-    "a57325c05c8ed3a57224187": ["9bf32f301f9bf31c7ff0a60", "c7432af0210c74d97b01b1c"]
+    - name: "明朝那些事"                    # 书籍名称
+      book_id: "a57325c05c8ed3a57224187"  # 书籍ID
+      chapters:                          # 章节ID列表
+        - "9bf32f301f9bf31c7ff0a60"
+        - "c7432af0210c74d97b01b1c"
+    
+    - name: "长安的荔枝"
+      book_id: "cc932860813ab67c2g014597"
+      chapters:
+        - "b6d32b90216b6d767d2f0dc"
   
   # 智能随机模式配置
   smart_random:

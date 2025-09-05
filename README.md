@@ -534,10 +534,20 @@ curl_config:
 ### 2. 智能书籍管理
 ```yaml
 reading:
-  # 书籍章节关联配置
+  # 书籍配置列表
   books:
-    "book_id_1": ["chapter_1", "chapter_2", "chapter_3"]
-    "book_id_2": ["chapter_a", "chapter_b"]
+    - name: "深度工作"                    # 书籍名称
+      book_id: "book_id_1"               # 书籍ID
+      chapters:                          # 章节ID列表
+        - "chapter_1"
+        - "chapter_2" 
+        - "chapter_3"
+    
+    - name: "原则"
+      book_id: "book_id_2"
+      chapters:
+        - "chapter_a"
+        - "chapter_b"
   
   # 智能随机策略
   smart_random:

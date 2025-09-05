@@ -4,7 +4,7 @@
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.2.2
+    版本: 0.2.3
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -61,7 +61,7 @@ import schedule
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-VERSION = "0.2.2"
+VERSION = "0.2.3"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 
@@ -99,8 +99,9 @@ class NetworkConfig:
 
 
 @dataclass
-class BookChapter:
-    """书籍章节关联"""
+class BookInfo:
+    """书籍信息"""
+    name: str
     book_id: str
     chapters: List[str] = field(default_factory=list)
 
@@ -148,7 +149,7 @@ class ReadingConfig:
     reading_interval: str = "25-35"
     use_curl_data_first: bool = True
     fallback_to_config: bool = True
-    book_chapters: List[BookChapter] = field(default_factory=list)
+    books: List[BookInfo] = field(default_factory=list)
     smart_random: SmartRandomConfig = field(default_factory=SmartRandomConfig)
 
 
@@ -255,7 +256,7 @@ class WeReadConfig:
 数据源配置:
   📄 CURL文件: {self._get_curl_source_desc()}
   👥 用户配置: {len(self.users)} 个用户 {'(多用户模式)' if self.users else '(单用户模式)'}
-  📚 配置书籍: {len(self.reading.book_chapters)} 本
+  📚 配置书籍: {len(self.reading.books)} 本
   🎯 优先策略: {'CURL数据优先' if self.reading.use_curl_data_first else '配置数据优先'}
   🔄 回退策略: {'启用' if self.reading.fallback_to_config else '禁用'}
 
@@ -321,7 +322,8 @@ class ReadingSession:
     actual_duration_seconds: int = 0
     successful_reads: int = 0
     failed_reads: int = 0
-    books_read: List[str] = field(default_factory=list)
+    books_read: List[str] = field(default_factory=list)  # 存储书籍ID
+    books_read_names: List[str] = field(default_factory=list)  # 存储书名
     chapters_read: List[str] = field(default_factory=list)
     breaks_taken: int = 0
     total_break_time: int = 0
@@ -357,7 +359,10 @@ class ReadingSession:
 ✅ 成功请求: {self.successful_reads}次
 ❌ 失败请求: {self.failed_reads}次
 📈 成功率: {self.success_rate:.1f}%
-📚 阅读书籍: {len(set(self.books_read))}本
+📚 阅读书籍: {len(set(self.books_read))}本 ({
+    ', '.join(set(self.books_read_names)) 
+    if self.books_read_names else '无书名信息'
+})
 📄 阅读章节: {len(set(self.chapters_read))}个
 ☕ 休息次数: {self.breaks_taken}次 (共{self.total_break_time}秒)
 🚀 平均响应: {self.average_response_time:.2f}秒
@@ -424,7 +429,7 @@ class ConfigManager:
                 config_data, "reading.fallback_to_config",
                 "FALLBACK_TO_CONFIG", True
             ),
-            book_chapters=self._load_book_chapters(config_data),
+            books=self._load_books(config_data),
             smart_random=SmartRandomConfig(
                 book_continuity=float(self._get_config_value(
                     config_data, "reading.smart_random.book_continuity",
@@ -547,27 +552,40 @@ class ConfigManager:
 
         return config
 
-    def _load_book_chapters(self, config_data: dict) -> List[BookChapter]:
-        """加载书籍章节配置"""
-        book_chapters = []
+    def _load_books(self, config_data: dict) -> List[BookInfo]:
+        """加载书籍配置"""
+        books = []
 
         # 从YAML配置加载
         books_config = self._get_nested_dict_value(
             config_data, "reading.books"
         )
-        if books_config and isinstance(books_config, dict):
-            for book_id, chapters in books_config.items():
-                if isinstance(chapters, list):
-                    book_chapters.append(BookChapter(
-                        book_id=book_id,
-                        chapters=chapters
-                    ))
+        if books_config and isinstance(books_config, list):
+            for book_data in books_config:
+                if isinstance(book_data, dict):
+                    name = book_data.get("name", "")
+                    book_id = book_data.get("book_id", "")
+                    chapters = book_data.get("chapters", [])
+                    
+                    if name and book_id and isinstance(chapters, list):
+                        books.append(BookInfo(
+                            name=name,
+                            book_id=book_id,
+                            chapters=chapters
+                        ))
+                        logging.info(
+                            f"✅ 已加载书籍配置: {name} ({book_id}), "
+                            f"章节数: {len(chapters)}"
+                        )
+                    else:
+                        logging.warning(f"⚠️ 跳过无效的书籍配置: {book_data}")
 
-        # 如果没有配置，则提示错误
-        if not book_chapters:
+        # 如果没有配置，则返回空列表
+        if not books:
+            logging.info("ℹ️ 未配置书籍信息，将使用CURL数据或运行时动态添加")
             return []
 
-        return book_chapters
+        return books
 
     def _get_config_value(self, config_data: dict, yaml_path: str,
                           env_key: str, default: Any) -> Any:
@@ -995,18 +1013,34 @@ class SmartReadingManager:
     def __init__(self, reading_config: ReadingConfig):
         self.config = reading_config
         self.current_book_id = ""
+        self.current_book_name = ""
         self.current_chapter_id = ""
         self.current_book_chapters = []
         self.current_chapter_index = 0
         self.last_book_switch_time = 0
+        # 创建书籍ID到章节的映射
         self.book_chapters_map = {
-            bc.book_id: bc.chapters for bc in reading_config.book_chapters
+            book.book_id: book.chapters for book in reading_config.books
+        }
+        # 创建书籍ID到书名的映射
+        self.book_names_map = {
+            book.book_id: book.name for book in reading_config.books
         }
 
     def set_curl_data(self, book_id: str, chapter_id: str):
         """设置从CURL提取的数据作为起点"""
-        logging.info(f"🔍 尝试设置CURL数据: 书籍={book_id}, 章节={chapter_id}")
-        logging.info(f"🔍 当前配置的书籍: {list(self.book_chapters_map.keys())}")
+        book_name = self.book_names_map.get(
+            book_id, f"未知书籍({book_id[:10]}...)"
+        )
+        logging.info(f"🔍 尝试设置CURL数据: 书籍={book_name}, 章节={chapter_id}")
+        
+        # 显示已配置的书籍信息
+        if self.book_names_map:
+            book_list = [
+                f"{name}({book_id[:10]}...)" 
+                for book_id, name in self.book_names_map.items()
+            ]
+            logging.info(f"🔍 当前配置的书籍: {', '.join(book_list)}")
 
         if not book_id or not chapter_id:
             logging.warning("⚠️ CURL数据为空，使用配置数据")
@@ -1018,20 +1052,26 @@ class SmartReadingManager:
                 chapters = self.book_chapters_map[book_id]
                 if chapter_id in chapters:
                     self.current_book_id = book_id
+                    self.current_book_name = self.book_names_map.get(
+                        book_id, "未知书籍"
+                    )
                     self.current_chapter_id = chapter_id
                     self.current_book_chapters = chapters
                     self.current_chapter_index = chapters.index(chapter_id)
                     logging.info(
-                        f"✅ 使用CURL数据作为阅读起点: 书籍 {book_id}, 章节 {chapter_id}"
+                        f"✅ 使用CURL数据作为阅读起点: "
+                        f"书籍《{self.current_book_name}》, 章节 {chapter_id}"
                     )
                     return True
                 else:
-                    logging.warning(f"⚠️ CURL章节 {chapter_id} 不在书籍 {book_id} 中")
+                    logging.warning(
+                        f"⚠️ CURL章节 {chapter_id} 不在书籍《{book_name}》中"
+                    )
                     # 尝试将章节添加到现有书籍
                     if self._add_chapter_to_book(book_id, chapter_id):
                         return True
             else:
-                logging.warning(f"⚠️ CURL书籍 {book_id} 不在配置中")
+                logging.warning(f"⚠️ CURL书籍《{book_name}》不在配置中")
                 # 尝试添加新的书籍-章节组合
                 if self._add_new_book_chapter(book_id, chapter_id):
                     return True
@@ -1044,29 +1084,38 @@ class SmartReadingManager:
         if book_id in self.book_chapters_map:
             self.book_chapters_map[book_id].append(chapter_id)
             self.current_book_id = book_id
+            self.current_book_name = self.book_names_map.get(book_id, "未知书籍")
             self.current_chapter_id = chapter_id
             self.current_book_chapters = self.book_chapters_map[book_id]
             self.current_chapter_index = len(self.current_book_chapters) - 1
-            logging.info(f"✅ 已将章节 {chapter_id} 添加到书籍 {book_id}")
+            logging.info(
+                f"✅ 已将章节 {chapter_id} 添加到书籍《{self.current_book_name}》"
+            )
             return True
         return False
 
     def _add_new_book_chapter(self, book_id: str, chapter_id: str) -> bool:
         """添加新的书籍-章节组合"""
+        book_name = f"动态书籍({book_id[:10]}...)"
         self.book_chapters_map[book_id] = [chapter_id]
+        self.book_names_map[book_id] = book_name
         self.current_book_id = book_id
+        self.current_book_name = book_name
         self.current_chapter_id = chapter_id
         self.current_book_chapters = [chapter_id]
         self.current_chapter_index = 0
-        logging.info(f"✅ 已添加新的书籍-章节组合: {book_id} -> {chapter_id}")
+        logging.info(
+            f"✅ 已添加新的书籍-章节组合: 《{book_name}》 -> {chapter_id}"
+        )
         return True
 
     def _fallback_to_config(self) -> bool:
         """回退到配置数据"""
         if self.config.fallback_to_config and self.book_chapters_map:
             first_book = list(self.book_chapters_map.keys())[0]
+            first_book_name = self.book_names_map.get(first_book, "未知书籍")
             self._switch_to_book(first_book)
-            logging.info(f"✅ 回退到配置数据: 书籍 {first_book}")
+            logging.info(f"✅ 回退到配置数据: 书籍《{first_book_name}》")
             return True
 
         logging.error("❌ 无法初始化阅读数据：既没有有效的CURL数据，也没有配置数据")
@@ -1086,7 +1135,8 @@ class SmartReadingManager:
     def _smart_random_position(self) -> Tuple[str, str]:
         """智能随机选择位置"""
         logging.debug(
-            f"🔍 智能随机模式 - 当前书籍: {self.current_book_id}, "
+            f"🔍 智能随机模式 - 当前书籍: "
+            f"《{self.current_book_name}》({self.current_book_id[:10]}...), "
             f"当前章节: {self.current_chapter_id}"
         )
 
@@ -1115,7 +1165,8 @@ class SmartReadingManager:
             new_book_id = random.choice(other_books)
             self._switch_to_book(new_book_id)
             self.last_book_switch_time = current_time
-            logging.info(f"📚 智能换书: {new_book_id}")
+            new_book_name = self.book_names_map.get(new_book_id, "未知书籍")
+            logging.info(f"📚 智能换书: 《{new_book_name}》")
 
         # 检查是否应该跳章节
         should_skip_chapter = (
@@ -1139,7 +1190,10 @@ class SmartReadingManager:
             self._next_chapter()
 
         result = (self.current_book_id, self.current_chapter_id)
-        logging.debug(f"🔍 智能随机选择结果: 书籍={result[0]}, 章节={result[1]}")
+        logging.debug(
+            f"🔍 智能随机选择结果: 书籍=《{self.current_book_name}》"
+            f"({result[0][:10]}...), 章节={result[1]}"
+        )
         return result
 
     def _sequential_position(self) -> Tuple[str, str]:
@@ -1165,6 +1219,7 @@ class SmartReadingManager:
         """切换到指定书籍"""
         if book_id in self.book_chapters_map:
             self.current_book_id = book_id
+            self.current_book_name = self.book_names_map.get(book_id, "未知书籍")
             self.current_book_chapters = self.book_chapters_map[book_id]
             self.current_chapter_index = 0
             self.current_chapter_id = self.current_book_chapters[0]
@@ -1186,7 +1241,8 @@ class SmartReadingManager:
             next_book_id = book_ids[next_book_index]
 
             self._switch_to_book(next_book_id)
-            logging.info(f"📚 顺序换书: {next_book_id}")
+            next_book_name = self.book_names_map.get(next_book_id, "未知书籍")
+            logging.info(f"📚 顺序换书: 《{next_book_name}》")
         else:
             self.current_chapter_id = self.current_book_chapters[
                 self.current_chapter_index
@@ -2199,6 +2255,12 @@ class WeReadSessionManager:
         # 记录阅读内容
         if book_id not in self.session_stats.books_read:
             self.session_stats.books_read.append(book_id)
+            # 记录书名
+            book_name = self.reading_manager.book_names_map.get(
+                book_id, f"未知书籍({book_id[:10]}...)"
+            )
+            if book_name not in self.session_stats.books_read_names:
+                self.session_stats.books_read_names.append(book_name)
         if chapter_id not in self.session_stats.chapters_read:
             self.session_stats.chapters_read.append(chapter_id)
 
