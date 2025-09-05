@@ -46,6 +46,8 @@ pip install -r requirements.txt
 # 3. 设置环境变量
 # 设置CURL命令文件路径（推荐）
 export WEREAD_CURL_BASH_FILE_PATH="curl_command.txt"
+# 或 设置 CURL命令字符串
+export WEREAD_CURL_STRING="yourcurl command"
 
 # 4. 可选配置
 export TARGET_DURATION="30-50"        # 目标阅读时长（分钟），此为 30 到 50 分钟随机
@@ -77,17 +79,20 @@ python weread-bot.py --config config.yaml
 ### 方式三：多用户运行
 
 ```bash
-# 1. 下载多用户配置模板
-wget https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/multiuser-example.yaml
+# 1. 下载配置模板
+wget https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/config.yaml.example
 
-# 2. 创建多用户配置文件
-cp multiuser-example.yaml multiuser-config.yaml
+# 2. 创建多用户配置文件进行配置
+cp config.yaml.example multiuser-config.yaml
 
 # 3. 为每个用户准备CURL文件
 echo "curl 'https://weread.qq.com/web/book/read' -H 'cookie: wr_skey=user1_key; ...' --data-raw '{...}'" > user1_curl.txt
 echo "curl 'https://weread.qq.com/web/book/read' -H 'cookie: wr_skey=user2_key; ...' --data-raw '{...}'" > user2_curl.txt
 
-# 4. 运行多用户会话
+# 5. 编辑配置文件
+vim multiuser-config.yaml
+
+# 6. 运行多用户会话
 python weread-bot.py --config multiuser-config.yaml
 ```
 
@@ -145,7 +150,6 @@ python weread-bot.py --verbose
 | CURL文件 | `curl_config.users[].file_path` | 用户专属的CURL文件路径 |
 | 个性化配置 | `curl_config.users[].reading_overrides` | 用户特定的阅读参数覆盖 |
 
-> 完整多用户配置示例见 [`config.yaml.example`](https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/config.yaml.example) 中。
 
 ### 应用配置
 
