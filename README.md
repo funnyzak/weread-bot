@@ -104,7 +104,7 @@ python weread-bot.py --config multiuser-config.yaml
 # 3. 在 Actions 页面手动触发或设置定时运行
 ```
 
-> 📖 **详细配置指南**: [GitHub Actions 自动阅读配置指南](https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/docs/github-action-guide.md)
+> 📖 **详细配置指南**: [GitHub Actions 自动阅读配置指南](https://github.com/funnyzak/weread-bot/blob/main/docs/github-action-autoread-guide.md)
 
 ### 方式五：不同运行模式
 
@@ -121,6 +121,22 @@ python weread-bot.py --mode daemon
 # 详细日志输出
 python weread-bot.py --verbose
 ```
+
+### Docker 方式运行
+
+一行命令运行（推荐）：
+
+```bash
+docker run -d --name weread-bot \
+  -v /path/to/curl_command.txt:/app/curl_command.txt:ro \
+  -e WEREAD_CURL_BASH_FILE_PATH="/app/curl_command.txt" \
+  -e TARGET_DURATION="30-50" \
+  -e READING_MODE="smart_random" \
+  -e PUSHPLUS_TOKEN="your_token" \
+  funnyzak/weread-bot:latest
+```
+
+> 更多 Docker 方式运行方式，详见 [Docker部署](#-docker部署)。
 
 ## ⚙️ 配置说明
 
