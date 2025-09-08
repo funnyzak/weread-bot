@@ -124,11 +124,13 @@ python weread-bot.py --verbose
 
 ### Docker 方式运行
 
-一行命令运行（推荐）：
+使用一行命令单次运行：
 
 ```bash
 docker run -d --name weread-bot \
+  --rm \
   -v /path/to/curl_command.txt:/app/curl_command.txt:ro \
+  -e TZ="Asia/Shanghai" \
   -e WEREAD_CURL_BASH_FILE_PATH="/app/curl_command.txt" \
   -e TARGET_DURATION="30-50" \
   -e READING_MODE="smart_random" \
@@ -306,9 +308,11 @@ schedule:
 - `"0 9,18 * * *"` - 每天9点和18点执行
 
 ### 3. 守护进程模式 (daemon)
+
 ```bash
 python weread-bot.py --mode daemon
 ```
+
 配置守护进程：
 ```yaml
 daemon:
@@ -316,6 +320,7 @@ daemon:
   session_interval: "120-180"       # 会话间隔2-3小时随机
   max_daily_sessions: 12            # 每天最多12次会话
 ```
+
 - 程序持续运行，自动管理会话间隔
 - 支持每日会话次数限制
 - 自动处理跨天重置
@@ -324,6 +329,7 @@ daemon:
 ## 🎲 阅读模式详解
 
 ### 1. 智能随机模式 (smart_random)
+
 ```yaml
 reading:
   mode: "smart_random"
@@ -332,25 +338,30 @@ reading:
     chapter_continuity: 0.7       # 70%概率顺序阅读章节
     book_switch_cooldown: 300     # 换书冷却5分钟
 ```
+
 - 模拟真实用户的阅读习惯
 - 倾向于连续阅读同一本书的连续章节
 - 偶尔随机跳转到其他书籍或章节
 - 有换书冷却机制，避免频繁切换
 
 ### 2. 顺序阅读模式 (sequential)
+
 ```yaml
 reading:
   mode: "sequential"
 ```
+
 - 按配置的书籍和章节顺序依次阅读
 - 读完一本书后自动切换到下一本
 - 最符合正常阅读逻辑
 
 ### 3. 纯随机模式 (pure_random)
+
 ```yaml
 reading:
   mode: "pure_random"
 ```
+
 - 完全随机选择书籍和章节
 - 每次请求都可能跳转到不同位置
 - 最大化随机性，但可能不够自然
@@ -358,6 +369,7 @@ reading:
 ## 📊 统计报告示例
 
 ### 单用户统计报告
+
 ```
 📊 微信读书自动阅读统计报告
 
@@ -377,6 +389,7 @@ reading:
 ```
 
 ### 多用户统计报告
+
 ```
 🎭 多用户阅读会话总结
 
@@ -397,6 +410,7 @@ reading:
 ## 🔧 抓包配置详解
 
 ### 获取CURL命令步骤
+
 1. **打开微信读书网页版**：https://weread.qq.com/
 2. **登录账号**：确保已登录微信读书账号
 3. **开始阅读**：找一本书开始阅读
@@ -412,12 +426,14 @@ reading:
 8. **保存配置**：将复制的内容保存为环境变量或文件
 
 ### 🎯 智能数据提取
+
 程序会自动从CURL命令中提取：
 - **Headers**：包括 User-Agent、Content-Type、Referer 等
 - **Cookies**：包括认证相关的 wr_skey、wr_vid 等
 - **请求数据**：包括 appId、书籍ID、章节ID 等真实参数
 
 **示例CURL命令结构**：
+
 ```bash
 curl 'https://weread.qq.com/web/book/read' \
   -H 'accept: application/json, text/plain, */*' \
@@ -431,12 +447,15 @@ curl 'https://weread.qq.com/web/book/read' \
 ```
 
 ### 配置方式选择
+
 **方式1：环境变量（推荐）**
+
 ```bash
 export WEREAD_CURL_STRING="curl 'https://weread.qq.com/web/book/read' ..."
 ```
 
 **方式2：文件存储**
+
 ```bash
 # 保存CURL命令到文件
 echo "curl 'https://weread.qq.com/web/book/read' ..." > curl_command.txt
@@ -444,14 +463,17 @@ export WEREAD_CURL_BASH_FILE_PATH="curl_command.txt"
 ```
 
 **方式3：配置文件**
+
 ```yaml
 curl_config:
   file_path: "curl_command.txt"
 ```
 
 ### 🔍 数据提取验证
+
 程序启动时会显示提取结果：
-```
+
+```text
 ✅ 已从环境变量加载CURL配置
 ✅ 已使用CURL中的请求数据，包含字段: ['appId', 'b', 'c', 'ci', 'co', 'sm', 'pr', 'rt', 'ts', 'rn', 'sg', 'ct', 'ps', 'pc', 's']
 ✅ 使用CURL数据作为阅读起点: 书籍 ce032b305a9bc1ce0b0dd2a, 章节 2a3327002582a38a4a932bf
@@ -464,6 +486,7 @@ curl_config:
 ```bash
 # 运行容器（环境变量方式）
 docker run -d \
+  -e TZ="Asia/Shanghai" \
   -e WEREAD_CURL_STRING="your_curl_here" \
   -e TARGET_DURATION="60-70" \
   -e PUSHPLUS_TOKEN="your_token" \
@@ -472,6 +495,7 @@ docker run -d \
 
 # 运行容器（配置文件方式）
 docker run -d \
+  -e TZ="Asia/Shanghai" \
   -v $(pwd)/config.yaml:/app/config.yaml \
   -v $(pwd)/curl_command.txt:/app/curl_command.txt \
   -v $(pwd)/logs:/app/logs \
@@ -480,6 +504,7 @@ docker run -d \
 
 # 守护进程模式
 docker run -d \
+  -e TZ="Asia/Shanghai" \
   -e WEREAD_CURL_STRING="your_curl_here" \
   -e STARTUP_MODE="daemon" \
   --name weread-daemon \
@@ -490,6 +515,7 @@ docker logs -f weread-bot
 ```
 
 ### Docker Compose
+
 ```yaml
 version: '3.8'
 services:
@@ -506,6 +532,7 @@ services:
 ```
 
 运行：
+
 ```bash
 
 # 启动服务
@@ -518,6 +545,7 @@ docker-compose logs -f
 ## 🛠️ 高级功能
 
 ### 1. 多用户会话管理
+
 ```yaml
 # 多用户配置结构
 curl_config:
@@ -540,6 +568,7 @@ curl_config:
 ```
 
 **多用户执行特性：**
+
 - **顺序执行**：用户按配置顺序依次执行，避免同时请求
 - **用户间隔**：每个用户完成后有30-60秒的间隔延迟
 - **独立配置**：每个用户可以有不同的阅读策略和时长
@@ -547,11 +576,13 @@ curl_config:
 - **统计汇总**：提供单用户和多用户的详细统计报告
 
 **配置覆盖优先级：**
+
 1. **用户特定配置** (`reading_overrides`) - 最高优先级
 2. **全局配置** (`reading`) - 默认配置  
 3. **程序默认值** - 最低优先级
 
 ### 2. 智能书籍管理
+
 ```yaml
 reading:
   # 书籍配置列表
@@ -577,6 +608,7 @@ reading:
 ```
 
 ### 3. 高级网络配置
+
 ```yaml
 network:
   timeout: 30                     # 请求超时
@@ -586,6 +618,7 @@ network:
 ```
 
 ### 4. 多平台通知支持
+
 ```yaml
 notification:
   enabled: true
@@ -679,6 +712,7 @@ notification:
 ## ❓ 常见问题
 
 ### Q: 如何防止被微信识别为机器人？
+
 **A: 内置多层防检测机制：**
 - **启动延迟**：60-120秒随机延迟，避免批量启动特征
 - **阅读速度变化**：每30秒调整阅读速度（0.8-1.3倍）
@@ -688,6 +722,7 @@ notification:
 - **Cookie自动刷新**：维护有效的认证状态
 
 ### Q: 程序运行多长时间？
+
 **A: 灵活的时长控制：**
 - **默认时长**：60-70分钟随机选择
 - **自定义区间**：支持如`"60-120"`的区间配置
@@ -711,6 +746,7 @@ notification:
 - 尝试重启程序让Cookie自动刷新
 
 ### Q: 支持多账号同时运行吗？
+
 **A: 支持多用户模式，顺序执行多个账号：**
 ```yaml
 # 多用户配置方式

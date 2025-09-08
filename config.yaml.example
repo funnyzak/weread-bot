@@ -10,7 +10,7 @@ app:
 
 # CURL配置（支持单用户和多用户模式）
 curl_config:
-  # 单用户模式，从文件读取CURL bash命令
+  # 单用户模式，从文件读取CURL bash命令。注意：多用户模式下此配置无效；如果同时配置了单用户和多用户，则优先使用多用户配置。
   file_path: "curl_command.txt"
 
   # 多用户模式（优先级高于单用户配置）
@@ -51,7 +51,7 @@ reading:
   books:
     - name: "明朝那些事"                    # 书籍名称
       book_id: "a57325c05c8ed3a57224187"  # 书籍ID
-      chapters:                          # 章节ID列表
+      chapters:                          # 章节ID列表，建议填写多个，避免章节过少导致频繁阅读同一章节
         - "9bf32f301f9bf31c7ff0a60"
         - "c7432af0210c74d97b01b1c"
     
@@ -162,7 +162,7 @@ schedule:
   cron_expression: "0 */2 * * *"
   timezone: "Asia/Shanghai"
 
-# 守护进程配置（仅在startup_mode为daemon时生效）
+# 守护进程配置（仅在startup_mode为daemon时生效）。 开启此方式后，程序将执行为一个阅读会话后，休眠一段时间再执行下一次，模拟多次长阅读行为（可以理解为无限循环阅读）。
 daemon:
   enabled: false
   # 会话间隔时间（分钟）
