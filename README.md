@@ -10,6 +10,9 @@ WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真
 
 💗 感谢 [findmover/wxread](https://github.com/findmover/wxread) 提供思路和部分代码支持。
 
+## TODO
+- [ ] 全自动完成一本书阅读 
+
 ## 🎯 核心功能
 
 - ⏰ **智能延迟**：支持启动随机延迟，有效防止固定启动时间特征识别
