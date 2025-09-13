@@ -10,10 +10,7 @@ WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真
 
 💗 感谢 [findmover/wxread](https://github.com/findmover/wxread) 提供思路和部分代码支持。
 
-## TODO
-- [ ] 全自动完成一本书阅读 
-
-## 🎯 核心功能
+## 核心功能
 
 - ⏰ **智能延迟**：支持启动随机延迟，有效防止固定启动时间特征识别
 - 📚 **灵活阅读**：支持时长区间配置（如 30-90 分钟随机），模拟真实阅读习惯
@@ -30,11 +27,11 @@ WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真
 - 🐳 **容器化部署**：提供 Docker 镜像，支持 Docker Compose 一键部署
 - ⚡ **云端自动化**：完美支持 GitHub Actions，实现免服务器自动阅读任务
 
-## 🚀 运行预览
+## 运行预览
 
 <img src="https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/.github/assets/preview.png" alt="运行预览" style="filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.2)); border-radius: 8px;"/>
 
-## 📋 快速开始
+## 快速开始
 
 ### 方式一：直接运行（推荐）
 
@@ -107,7 +104,7 @@ python weread-bot.py --config multiuser-config.yaml
 # 3. 在 Actions 页面手动触发或设置定时运行
 ```
 
-> 📖 **详细配置指南**: [GitHub Actions 自动阅读配置指南](https://github.com/funnyzak/weread-bot/blob/main/docs/github-action-autoread-guide.md)
+> **详细配置指南**: [GitHub Actions 自动阅读配置指南](https://github.com/funnyzak/weread-bot/blob/main/docs/github-action-autoread-guide.md)
 
 ### 方式五：不同运行模式
 
@@ -141,9 +138,9 @@ docker run -d --name weread-bot \
   funnyzak/weread-bot:latest
 ```
 
-> 更多 Docker 方式运行方式，详见 [Docker部署](#-docker部署)。
+> 更多 Docker 方式运行方式，详见 [Docker部署](#docker部署)。
 
-## ⚙️ 配置说明
+## 配置说明
 
 配置项可通过环境变量或配置文件设置，优先级为：环境变量 > 配置文件 > 程序默认值。 配置文件模板见 [`config.yaml.example`](https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/config.yaml.example)。
 
@@ -158,7 +155,7 @@ docker run -d --name weread-bot \
 - `WEREAD_CURL_STRING`：此环境变量适合在 青龙等面板、GitHub Actions 中直接创建环境变量，内容为完整的CURL命令字符串
 - `WEREAD_CURL_BASH_FILE_PATH`：此环境变量适合在本地或Docker中使用，内容为保存CURL命令的文件路径
 
-> 获取CURL命令详见[抓包配置详解](#🔧-抓包配置详解)
+> 获取CURL命令详见[抓包配置详解](#抓包配置详解)
 
 ### 多用户配置
 
@@ -281,7 +278,7 @@ docker run -d --name weread-bot \
 | 会话间隔 | `SESSION_INTERVAL` | `120-180` | 会话间隔时间（分钟） |
 | 每日最大会话数 | `MAX_DAILY_SESSIONS` | `12` | 每日最大执行次数 |
 
-## 🚀 运行模式详解
+## 运行模式详解
 
 ### 1. 立即执行模式 (immediate)
 ```bash
@@ -329,7 +326,7 @@ daemon:
 - 自动处理跨天重置
 - 支持优雅关闭（Ctrl+C）
 
-## 🎲 阅读模式详解
+## 阅读模式详解
 
 ### 1. 智能随机模式 (smart_random)
 
@@ -369,7 +366,7 @@ reading:
 - 每次请求都可能跳转到不同位置
 - 最大化随机性，但可能不够自然
 
-## 📊 统计报告示例
+## 统计报告示例
 
 ### 单用户统计报告
 
@@ -410,7 +407,7 @@ reading:
 🎉 多用户阅读任务完成！
 ```
 
-## 🔧 抓包配置详解
+## 抓包配置详解
 
 ### 获取CURL命令步骤
 
@@ -428,7 +425,7 @@ reading:
    - 选择 `Copy` → `Copy as cURL (bash)`
 8. **保存配置**：将复制的内容保存为环境变量或文件
 
-### 🎯 智能数据提取
+### 智能数据提取
 
 程序会自动从CURL命令中提取：
 - **Headers**：包括 User-Agent、Content-Type、Referer 等
@@ -472,7 +469,7 @@ curl_config:
   file_path: "curl_command.txt"
 ```
 
-### 🔍 数据提取验证
+### 数据提取验证
 
 程序启动时会显示提取结果：
 
@@ -482,7 +479,7 @@ curl_config:
 ✅ 使用CURL数据作为阅读起点: 书籍 ce032b305a9bc1ce0b0dd2a, 章节 2a3327002582a38a4a932bf
 ```
 
-## 🐳 Docker部署
+## Docker部署
 
 ### 运行
 
@@ -545,7 +542,7 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-## 🛠️ 高级功能
+## 高级功能
 
 ### 1. 多用户会话管理
 
@@ -589,19 +586,27 @@ curl_config:
 ```yaml
 reading:
   # 书籍配置列表
+  # 章节索引优先级：配置的索引值 > 自动计算的索引 > CURL提取的值
   books:
     - name: "深度工作"                    # 书籍名称
       book_id: "book_id_1"               # 书籍ID
-      chapters:                          # 章节ID列表
-        - "chapter_1"
-        - "chapter_2" 
-        - "chapter_3"
+      chapters:                          # 章节配置，支持新旧两种格式
+        # 新格式：包含章节ID和可选的章节索引（推荐）
+        - chapter_id: "chapter_1"
+          chapter_index: 60              # 可选：微信读书官方章节索引ID
+        - chapter_id: "chapter_2"
+          chapter_index: 61              # 可选：微信读书官方章节索引ID
+        # 旧格式：只有章节ID（向后兼容）
+        - "chapter_3"                    # 兼容旧格式，章节索引将自动计算或从CURL提取
     
     - name: "原则"
       book_id: "book_id_2"
       chapters:
-        - "chapter_a"
-        - "chapter_b"
+        # 也可以使用简化的字段名
+        - id: "chapter_a"
+          index: 25                      # 使用简化字段名
+        # 混合使用新旧格式
+        - "chapter_b"                    # 旧格式
   
   # 智能随机策略
   smart_random:
@@ -609,6 +614,38 @@ reading:
     chapter_continuity: 0.7       # 章节连续性
     book_switch_cooldown: 300     # 换书冷却
 ```
+
+#### 章节索引配置说明
+
+**什么是章节索引（ci）？**
+- 章节索引是微信读书为每个章节分配的专有数字标识符
+- 与章节ID（c）不同，章节索引通常是连续的数字（如：60, 61, 62...）
+
+**配置格式：**
+1. **新格式（推荐）**：包含章节ID和可选的章节索引
+   ```yaml
+   - chapter_id: "9bf32f301f9bf31c7ff0a60"
+     chapter_index: 60
+   ```
+   或使用简化字段名：
+   ```yaml
+   - id: "9bf32f301f9bf31c7ff0a60"
+     index: 60
+   ```
+
+2. **旧格式（兼容）**：只有章节ID字符串
+   ```yaml
+   - "9bf32f301f9bf31c7ff0a60"
+   ```
+
+**章节索引优先级：**
+1. **配置的索引值**：在配置文件中明确指定的 `chapter_index` 或 `index`
+2. **自动计算的索引**：章节在配置列表中的位置（从0开始）
+3. **CURL提取的值**：从抓取的CURL命令中提取的 `ci` 值
+
+**如何获取章节索引？**
+1. 在微信读书网页版翻页时，查看Network请求中的 `ci` 字段值
+2. 不同章节的 `ci` 值通常是连续递增的数字
 
 ### 3. 高级网络配置
 
@@ -684,7 +721,7 @@ notification:
         token: "${NTFY_TOKEN}"
 ```
 
-## 📖 微信读书API字段说明
+## 微信读书API字段说明
 
 程序会自动从CURL命令中提取并处理这些字段，无需手动配置：
 
@@ -693,7 +730,7 @@ notification:
 | `appId` | `"wb115321887466h953405538"` | 应用唯一标识符 | 从CURL提取，保持不变 |
 | `b` | `"241325c071f385dd2417ff2"` | 书籍ID | 智能管理，支持多书籍切换 |
 | `c` | `"02e32f0021b02e74f10ece8"` | 章节ID | 智能管理，支持章节跳转 |
-| `ci` | `60` | 章节索引 | 从CURL提取，保持不变 |
+| `ci` | `60` | 章节索引 | 智能管理，支持配置和自动计算 |
 | `co` | `336` | 内容位置/页码 | 从CURL提取，保持不变 |
 | `sm` | `"2　开启你的专注之路有一篇名为《算术"` | 当前阅读内容摘要 | 从CURL提取，保持不变 |
 | `pr` | `65` | 页码/段落索引 | 从CURL提取，保持不变 |
@@ -706,13 +743,13 @@ notification:
 | `pc` | `"xxxxxxxx"` | 设备标识符 | 从CURL提取，保持不变 |
 | `s` | `"fadcb9de"` | 数据校验和 | 动态计算哈希值 |
 
-### 🔐 安全机制
+### 安全机制
 - **签名算法**：使用时间戳、随机数和密钥生成SHA256签名
 - **数据校验**：通过特定算法计算请求数据的校验和
 - **时间同步**：动态生成符合服务器要求的时间戳
 - **Cookie管理**：自动刷新和维护认证Cookie
 
-## ❓ 常见问题
+## 常见问题
 
 ### Q: 如何防止被微信识别为机器人？
 
@@ -807,7 +844,7 @@ reading:
     chapter_continuity: 0.8     # 提高章节连续性
 ```
 
-## 📈 性能优化建议
+## 性能优化建议
 
 ### 1. 网络优化
 ```yaml
@@ -833,7 +870,7 @@ reading:
   reading_interval: "30-45"  # 增加请求间隔
 ```
 
-## 🛡️ 安全建议
+## 安全建议
 
 1. **不要分享CURL命令**：包含个人认证信息
 2. **定期更新**：Cookie会过期，需要重新获取
@@ -841,13 +878,13 @@ reading:
 4. **监控日志**：关注异常和错误信息
 5. **备份配置**：保存有效的配置文件
 
-## ❤️ 鸣谢
+## 鸣谢
 
 特别感谢以下项目提供的实现参考：
 
 - https://github.com/findmover/wxread
 
-## 🚨 免责声明
+## 免责声明
 
 本项目仅供学习和研究目的，不得用于任何商业活动。用户在使用本项目时应遵守所在地区的法律法规，对于违法使用所导致的后果，本项目及作者不承担任何责任。 本项目可能存在未知的缺陷和风险（包括但不限于账号封禁等），使用者应自行承担使用本项目所产生的所有风险及责任。 作者不保证本项目的准确性、完整性、及时性、可靠性，也不承担任何因使用本项目而产生的任何损失或损害责任。 使用本项目即表示您已阅读并同意本免责声明的全部内容。
 

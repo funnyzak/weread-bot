@@ -99,11 +99,19 @@ class NetworkConfig:
 
 
 @dataclass
+class ChapterInfo:
+    """章节信息"""
+    chapter_id: str
+    chapter_index: Optional[int] = None
+
+
+@dataclass
 class BookInfo:
     """书籍信息"""
     name: str
     book_id: str
-    chapters: List[str] = field(default_factory=list)
+    chapters: List[str] = field(default_factory=list)  # 章节字符串列表
+    chapter_infos: List[ChapterInfo] = field(default_factory=list)  # 新的章节信息格式
 
 
 @dataclass
@@ -565,14 +573,37 @@ class ConfigManager:
                 if isinstance(book_data, dict):
                     name = book_data.get("name", "")
                     book_id = book_data.get("book_id", "")
-                    chapters = book_data.get("chapters", [])
+                    chapters_config = book_data.get("chapters", [])
                     
-                    if name and book_id and isinstance(chapters, list):
-                        books.append(BookInfo(
-                            name=name,
-                            book_id=book_id,
-                            chapters=chapters
-                        ))
+                    if name and book_id and isinstance(chapters_config, list):
+                        # 处理章节配置，支持两种格式
+                        chapters = []
+                        chapter_infos = []
+                        
+                        for chapter_item in chapters_config:
+                            if isinstance(chapter_item, str):
+                                # 格式：只有章节ID字符串
+                                chapters.append(chapter_item)
+                                chapter_infos.append(ChapterInfo(chapter_id=chapter_item))
+                            elif isinstance(chapter_item, dict):
+                                # 格式：包含章节ID和可选的索引
+                                chapter_id = chapter_item.get("chapter_id") or chapter_item.get("id")
+                                chapter_index = chapter_item.get("chapter_index") or chapter_item.get("index")
+                                
+                                if chapter_id:
+                                    chapters.append(chapter_id)  # 保持向后兼容
+                                    chapter_infos.append(ChapterInfo(
+                                        chapter_id=chapter_id,
+                                        chapter_index=chapter_index
+                                    ))
+                        
+                        if chapters:
+                            books.append(BookInfo(
+                                name=name,
+                                book_id=book_id,
+                                chapters=chapters,
+                                chapter_infos=chapter_infos
+                            ))
                         logging.info(
                             f"✅ 已加载书籍配置: {name} ({book_id}), "
                             f"章节数: {len(chapters)}"
@@ -1015,10 +1046,12 @@ class SmartReadingManager:
         self.current_book_id = ""
         self.current_book_name = ""
         self.current_chapter_id = ""
+        self.current_chapter_ci = None  # 当前章节的索引ID
         self.current_book_chapters = []
         self.current_chapter_index = 0
         self.last_book_switch_time = 0
-        # 创建书籍ID到章节的映射
+        
+        # 创建书籍ID到章节的映射（保持向后兼容）
         self.book_chapters_map = {
             book.book_id: book.chapters for book in reading_config.books
         }
@@ -1026,6 +1059,41 @@ class SmartReadingManager:
         self.book_names_map = {
             book.book_id: book.name for book in reading_config.books
         }
+        # 创建书籍ID到章节信息的映射
+        self.book_chapter_infos_map = {
+            book.book_id: book.chapter_infos for book in reading_config.books
+        }
+        # 创建章节ID到章节索引的映射
+        self.chapter_index_map = {}
+        for book in reading_config.books:
+            for chapter_info in book.chapter_infos:
+                if chapter_info.chapter_index is not None:
+                    self.chapter_index_map[chapter_info.chapter_id] = chapter_info.chapter_index
+
+    def get_chapter_index(self, chapter_id: str, curl_ci: Optional[int] = None) -> Optional[int]:
+        """
+        获取章节索引，按照优先级：配置的索引值 > 自动计算的索引 > CURL提取的值
+        
+        Args:
+            chapter_id: 章节ID
+            curl_ci: 从CURL提取的章节索引
+        
+        Returns:
+            章节索引，如果都没有则返回None
+        """
+        # 优先级1：配置的索引值
+        if chapter_id in self.chapter_index_map:
+            return self.chapter_index_map[chapter_id]
+        
+        # 优先级2：CURL提取的值
+        if curl_ci is not None:
+            return curl_ci
+        
+        # 优先级3：自动计算的索引（当前章节在列表中的位置）
+        if self.current_book_chapters and chapter_id in self.current_book_chapters:
+            return self.current_book_chapters.index(chapter_id)
+        
+        return None
 
     def set_curl_data(self, book_id: str, chapter_id: str):
         """设置从CURL提取的数据作为起点"""
@@ -1058,9 +1126,12 @@ class SmartReadingManager:
                     self.current_chapter_id = chapter_id
                     self.current_book_chapters = chapters
                     self.current_chapter_index = chapters.index(chapter_id)
+                    # 设置章节索引（ci），按优先级处理
+                    self.current_chapter_ci = self.get_chapter_index(chapter_id)
                     logging.info(
                         f"✅ 使用CURL数据作为阅读起点: "
-                        f"书籍《{self.current_book_name}》, 章节 {chapter_id}"
+                        f"书籍《{self.current_book_name}》, 章节 {chapter_id}, "
+                        f"索引 {self.current_chapter_ci if self.current_chapter_ci is not None else 'N/A'}"
                     )
                     return True
                 else:
@@ -1088,8 +1159,11 @@ class SmartReadingManager:
             self.current_chapter_id = chapter_id
             self.current_book_chapters = self.book_chapters_map[book_id]
             self.current_chapter_index = len(self.current_book_chapters) - 1
+            # 设置章节索引
+            self.current_chapter_ci = self.get_chapter_index(chapter_id)
             logging.info(
-                f"✅ 已将章节 {chapter_id} 添加到书籍《{self.current_book_name}》"
+                f"✅ 已将章节 {chapter_id} 添加到书籍《{self.current_book_name}》, "
+                f"索引 {self.current_chapter_ci if self.current_chapter_ci is not None else 'N/A'}"
             )
             return True
         return False
@@ -1104,8 +1178,11 @@ class SmartReadingManager:
         self.current_chapter_id = chapter_id
         self.current_book_chapters = [chapter_id]
         self.current_chapter_index = 0
+        # 设置章节索引
+        self.current_chapter_ci = self.get_chapter_index(chapter_id)
         logging.info(
-            f"✅ 已添加新的书籍-章节组合: 《{book_name}》 -> {chapter_id}"
+            f"✅ 已添加新的书籍-章节组合: 《{book_name}》 -> {chapter_id}, "
+            f"索引 {self.current_chapter_ci if self.current_chapter_ci is not None else 'N/A'}"
         )
         return True
 
@@ -1182,7 +1259,10 @@ class SmartReadingManager:
                 self.current_chapter_id = self.current_book_chapters[
                     self.current_chapter_index
                 ]
-                logging.info(f"📄 智能跳章节: {self.current_chapter_id}")
+                # 更新章节索引
+                self.current_chapter_ci = self.get_chapter_index(self.current_chapter_id)
+                logging.info(f"📄 智能跳章节: {self.current_chapter_id}, "
+                           f"索引 {self.current_chapter_ci if self.current_chapter_ci is not None else 'N/A'}")
             else:
                 logging.debug("📄 当前书籍只有一个章节，无法跳章节")
         else:
@@ -1223,6 +1303,8 @@ class SmartReadingManager:
             self.current_book_chapters = self.book_chapters_map[book_id]
             self.current_chapter_index = 0
             self.current_chapter_id = self.current_book_chapters[0]
+            # 更新章节索引
+            self.current_chapter_ci = self.get_chapter_index(self.current_chapter_id)
 
     def _next_chapter(self):
         """移动到下一章节"""
@@ -1247,6 +1329,8 @@ class SmartReadingManager:
             self.current_chapter_id = self.current_book_chapters[
                 self.current_chapter_index
             ]
+            # 更新章节索引
+            self.current_chapter_ci = self.get_chapter_index(self.current_chapter_id)
 
 
 class HumanBehaviorSimulator:
@@ -2071,9 +2155,16 @@ class WeReadSessionManager:
 
                         # 设置智能阅读管理器的CURL数据起点
                         if 'b' in curl_data and 'c' in curl_data:
+                            # 传递CURL中的ci值给阅读管理器
+                            curl_ci = curl_data.get('ci')
                             self.reading_manager.set_curl_data(
                                 curl_data['b'], curl_data['c']
                             )
+                            # 如果阅读管理器没有设置章节索引，则使用CURL中的值
+                            if (self.reading_manager.current_chapter_ci is None 
+                                and curl_ci is not None):
+                                self.reading_manager.current_chapter_ci = curl_ci
+                                logging.info(f"📋 使用CURL中的章节索引: ci={curl_ci}")
                     else:
                         logging.warning(
                             f"⚠️ 用户 {self.user_name} CURL数据缺少必需字段: {missing_fields}，"
@@ -2251,6 +2342,12 @@ class WeReadSessionManager:
         )
         self.data['b'] = book_id
         self.data['c'] = chapter_id
+        
+        # 设置章节索引（ci），按照优先级：配置的索引值 > 自动计算的索引 > CURL提取的值
+        chapter_ci = self.reading_manager.current_chapter_ci
+        if chapter_ci is not None:
+            self.data['ci'] = chapter_ci
+            logging.debug(f"🔢 设置章节索引: ci={chapter_ci} (章节: {chapter_id})")
 
         # 记录阅读内容
         if book_id not in self.session_stats.books_read:
