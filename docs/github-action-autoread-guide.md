@@ -104,6 +104,21 @@ Fork 完成后，需要在你的仓库中配置必要的环境变量：
 > 3. 获取 Webhook URL
 > 4. 示例：`https://oapi.dingtalk.com/robot/send?access_token=your_access_token`
 
+**GOTify 通知**
+| Secret 名称 | 说明 |
+|------------|------|
+| `GOTIFY_SERVER` | GOTify 服务器地址 |
+| `GOTIFY_TOKEN` | GOTify 访问令牌 |
+| `GOTIFY_PRIORITY` | 消息优先级（可选，默认 5） |
+| `GOTIFY_TITLE` | 消息标题（可选） |
+
+> **获取方式**：
+> 1. 访问你的 GOTify 服务器，登录后进入“应用”页面，创建新应用以获取访问令牌（Token）。
+> 2. GOTify 服务器地址通常为你的部署地址，如 `https://gotify.example.com`。
+> 3. 优先级和标题可根据需要自定义，留空则使用默认值。
+
+
+
 **代理配置（可选）**
 | Secret 名称 | 说明 |
 |------------|------|

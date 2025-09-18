@@ -117,6 +117,10 @@ jobs:
         WEWORK_MSG_TYPE: ${{ secrets.WEWORK_MSG_TYPE }}
         DINGTALK_WEBHOOK_URL: ${{ secrets.DINGTALK_WEBHOOK_URL }}
         DINGTALK_MSG_TYPE: ${{ secrets.DINGTALK_MSG_TYPE }}
+        GOTIFY_SERVER: ${{ secrets.GOTIFY_SERVER }}
+        GOTIFY_TOKEN: ${{ secrets.GOTIFY_TOKEN }}
+        GOTIFY_PRIORITY: ${{ secrets.GOTIFY_PRIORITY }}
+        GOTIFY_TITLE: ${{ secrets.GOTIFY_TITLE }}
         # 代理设置（可选）
         HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
         HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}

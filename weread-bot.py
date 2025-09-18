@@ -4,7 +4,7 @@
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.2.6
+    版本: 0.2.7
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -61,7 +61,7 @@ import schedule
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-VERSION = "0.2.6"
+VERSION = "0.2.7"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 
@@ -76,6 +76,7 @@ class NotificationMethod(Enum):
     FEISHU = "feishu"
     WEWORK = "wework"
     DINGTALK = "dingtalk"
+    GOTIFY = "gotify"
 
 
 class ReadingMode(Enum):
@@ -720,8 +721,8 @@ class ConfigManager:
 
         return channels
 
-    def _apply_env_overrides_to_channel(self, channel_name: str, 
-                                       base_config: dict) -> dict:
+    def _apply_env_overrides_to_channel(self, channel_name: str,
+                                         base_config: dict) -> dict:
         """应用环境变量覆盖到通道配置"""
         config = base_config.copy()
         
@@ -785,6 +786,16 @@ class ConfigManager:
                 config["webhook_url"] = os.getenv("DINGTALK_WEBHOOK_URL")
             if os.getenv("DINGTALK_MSG_TYPE"):
                 config["msg_type"] = os.getenv("DINGTALK_MSG_TYPE")
+        
+        elif channel_name == "gotify":
+            if os.getenv("GOTIFY_SERVER"):
+                config["server"] = os.getenv("GOTIFY_SERVER")
+            if os.getenv("GOTIFY_TOKEN"):
+                config["token"] = os.getenv("GOTIFY_TOKEN")
+            if os.getenv("GOTIFY_PRIORITY"):
+                config["priority"] = int(os.getenv("GOTIFY_PRIORITY"))
+            if os.getenv("GOTIFY_TITLE"):
+                config["title"] = os.getenv("GOTIFY_TITLE")
         
         return config
 
@@ -907,6 +918,23 @@ class ConfigManager:
                 name="dingtalk",
                 enabled=True,
                 config=dingtalk_config
+            ))
+        
+        # Gotify
+        if os.getenv("GOTIFY_SERVER") and os.getenv("GOTIFY_TOKEN"):
+            gotify_config = {
+                "server": os.getenv("GOTIFY_SERVER"),
+                "token": os.getenv("GOTIFY_TOKEN")
+            }
+            if os.getenv("GOTIFY_PRIORITY"):
+                gotify_config["priority"] = int(os.getenv("GOTIFY_PRIORITY"))
+            if os.getenv("GOTIFY_TITLE"):
+                gotify_config["title"] = os.getenv("GOTIFY_TITLE")
+            
+            channels.append(NotificationChannel(
+                name="gotify",
+                enabled=True,
+                config=gotify_config
             ))
         
         if channels:
@@ -1488,6 +1516,8 @@ class NotificationService:
                 return self._send_wework(message, channel.config)
             elif channel.name == "dingtalk":
                 return self._send_dingtalk(message, channel.config)
+            elif channel.name == "gotify":
+                return self._send_gotify(message, channel.config)
             else:
                 logging.warning(f"⚠️ 未知的通知通道: {channel.name}")
                 return False
@@ -1555,7 +1585,7 @@ class NotificationService:
 
     def _send_http_notification(self, url: str, data: dict,
                                 service_name: str,
-                                proxies: dict = None) -> bool:
+                                proxies: dict = None, headers: dict = None) -> bool:
         """发送HTTP通知"""
         max_retries = 3
 
@@ -1566,10 +1596,12 @@ class NotificationService:
                         url, json=data, proxies=proxies, timeout=30
                     )
                 else:
+                    # 使用自定义headers或默认headers
+                    request_headers = headers if headers else {'Content-Type': 'application/json'}
                     response = requests.post(
                         url,
                         data=json.dumps(data).encode('utf-8'),
-                        headers={'Content-Type': 'application/json'},
+                        headers=request_headers,
                         timeout=10
                     )
 
@@ -1803,6 +1835,31 @@ class NotificationService:
             }
 
         return self._send_http_notification(config["webhook_url"], data, "钉钉")
+
+    def _send_gotify(self, message: str, config: Dict[str, Any]) -> bool:
+        """发送Gotify通知"""
+        if not config.get("server") or not config.get("token"):
+            logging.error("❌ Gotify服务器地址或令牌未配置")
+            return False
+
+        # 构建Gotify API URL
+        server = config["server"].rstrip("/")
+        url = f"{server}/message"
+        
+        # 准备请求数据
+        data = {
+            "message": message,
+            "priority": config.get("priority", 5),  # 默认优先级为5
+            "title": config.get("title", "WeRead Bot 通知")
+        }
+
+        # 准备请求头
+        headers = {
+            "Content-Type": "application/json",
+            "X-Gotify-Key": config["token"]
+        }
+
+        return self._send_http_notification(url, data, "Gotify", headers=headers)
 
 
 class CronParser:

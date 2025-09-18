@@ -178,6 +178,19 @@ notification:
         webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=your_access_token"
         # 消息类型：text(纯文本), markdown(Markdown), link(链接)
         msg_type: "text"
+    
+    # 通道10：Gotify
+    - name: "gotify"
+      enabled: false
+      config:
+        # Gotify服务器地址
+        server: "https://gotify.example.com"
+        # 应用令牌
+        token: "your_gotify_token_here"
+        # 消息优先级（1-10，数字越大优先级越高）
+        priority: 5
+        # 消息标题（可选）
+        title: "WeRead Bot 通知"
 
 # 定时任务配置（仅在startup_mode为scheduled时生效）
 schedule:

@@ -19,7 +19,7 @@ WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真
 - 🤖 **高级行为模拟**：模拟真实用户阅读行为，包括阅读速度变化、中途休息等
 - ⚙️ **多样化配置**：支持配置文件、环境变量、命令行参数三种设置方式，灵活适配各种部署环境
 - 📊 **详细统计报告**：提供完整的阅读数据、成功率统计和多维度分析
-- 📱 **多平台消息推送**：支持 PushPlus、Telegram、WxPusher、Apprise、Bark、Ntfy、飞书、企业微信、钉钉 等通知服务
+- 📱 **多平台消息推送**：支持 PushPlus、Telegram、WxPusher、Apprise、Bark、Ntfy、飞书、企业微信、钉钉、Gotify 等通知服务
 - 🔧 **智能配置解析**：自动从 CURL 命令提取请求数据、headers 和 cookies，无需手动配置
 - 🎯 **精准请求模拟**：使用真实抓包数据，动态生成签名和校验，大幅提高成功率
 - 🕐 **灵活定时任务**：支持 cron 表达式定时执行，可自定义执行频率和时间
@@ -235,6 +235,10 @@ docker run -d --name weread-bot \
 | | `msg_type` | `WEWORK_MSG_TYPE` | 消息类型：text/markdown/news |
 | 钉钉 | `webhook_url` | `DINGTALK_WEBHOOK_URL` | 钉钉机器人Webhook URL |
 | | `msg_type` | `DINGTALK_MSG_TYPE` | 消息类型：text/markdown/link |
+| Gotify | `server` | `GOTIFY_SERVER` | Gotify服务器地址 |
+| | `token` | `GOTIFY_TOKEN` | Gotify应用令牌 |
+| | `priority` | `GOTIFY_PRIORITY` | 消息优先级（1-10） |
+| | `title` | `GOTIFY_TITLE` | 消息标题 |
 
 ### 通知方式详细说明
 
@@ -296,6 +300,17 @@ docker run -d --name weread-bot \
 - 配置：设置 `DINGTALK_WEBHOOK_URL`
 - 消息格式：支持 `text`（纯文本）、`markdown`（Markdown格式）、`link`（链接消息）
 - 示例：`https://oapi.dingtalk.com/robot/send?access_token=your_access_token`
+
+#### Gotify（开源推送服务）
+- 获取方式：
+  1. 部署 Gotify 服务器（自建或使用公共服务）
+  2. 创建应用并获取应用令牌
+  3. 配置服务器地址和令牌
+- 配置：设置 `GOTIFY_SERVER` 和 `GOTIFY_TOKEN`
+- 优先级：可选设置 `GOTIFY_PRIORITY`（1-10，数字越大优先级越高）
+- 标题：可选设置 `GOTIFY_TITLE` 自定义消息标题
+- 示例：`https://gotify.example.com` + `your_app_token`
+- 官网：https://gotify.net/
 
 ### 定时任务配置（scheduled模式）
 | 配置项 | 环境变量 | 默认值 | 说明 |
@@ -779,6 +794,19 @@ notification:
         webhook_url: "${DINGTALK_WEBHOOK_URL}"
         # 消息类型：text(纯文本), markdown(Markdown), link(链接)
         msg_type: "text"
+    
+    # 通道10：Gotify
+    - name: "gotify"
+      enabled: false
+      config:
+        # Gotify服务器地址
+        server: "${GOTIFY_SERVER}"     # 如：https://gotify.example.com
+        # 应用令牌
+        token: "${GOTIFY_TOKEN}"
+        # 消息优先级（1-10，数字越大优先级越高）
+        priority: "${GOTIFY_PRIORITY}"
+        # 消息标题（可选）
+        title: "${GOTIFY_TITLE}"
 ```
 
 ## 微信读书API字段说明
