@@ -4,7 +4,7 @@
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.2.5
+    版本: 0.2.6
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -61,7 +61,7 @@ import schedule
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-VERSION = "0.2.5"
+VERSION = "0.2.6"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 
@@ -73,6 +73,9 @@ class NotificationMethod(Enum):
     APPRISE = "apprise"
     BARK = "bark"
     NTFY = "ntfy"
+    FEISHU = "feishu"
+    WEWORK = "wework"
+    DINGTALK = "dingtalk"
 
 
 class ReadingMode(Enum):
@@ -359,6 +362,10 @@ class ReadingSession:
 
     def get_statistics_summary(self) -> str:
         """获取统计摘要"""
+        books_info = (
+            ', '.join(set(self.books_read_names))
+            if self.books_read_names else '无书名信息'
+        )
         return f"""📊 微信读书自动阅读统计报告
 👤 用户名称: {self.user_name}
 ⏰ 开始时间: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}
@@ -367,10 +374,7 @@ class ReadingSession:
 ✅ 成功请求: {self.successful_reads}次
 ❌ 失败请求: {self.failed_reads}次
 📈 成功率: {self.success_rate:.1f}%
-📚 阅读书籍: {len(set(self.books_read))}本 ({
-    ', '.join(set(self.books_read_names)) 
-    if self.books_read_names else '无书名信息'
-})
+📚 阅读书籍: {len(set(self.books_read))}本 ({books_info})
 📄 阅读章节: {len(set(self.chapters_read))}个
 ☕ 休息次数: {self.breaks_taken}次 (共{self.total_break_time}秒)
 🚀 平均响应: {self.average_response_time:.2f}秒
@@ -764,6 +768,24 @@ class ConfigManager:
             if os.getenv("NTFY_TOKEN"):
                 config["token"] = os.getenv("NTFY_TOKEN")
         
+        elif channel_name == "feishu":
+            if os.getenv("FEISHU_WEBHOOK_URL"):
+                config["webhook_url"] = os.getenv("FEISHU_WEBHOOK_URL")
+            if os.getenv("FEISHU_MSG_TYPE"):
+                config["msg_type"] = os.getenv("FEISHU_MSG_TYPE")
+        
+        elif channel_name == "wework":
+            if os.getenv("WEWORK_WEBHOOK_URL"):
+                config["webhook_url"] = os.getenv("WEWORK_WEBHOOK_URL")
+            if os.getenv("WEWORK_MSG_TYPE"):
+                config["msg_type"] = os.getenv("WEWORK_MSG_TYPE")
+        
+        elif channel_name == "dingtalk":
+            if os.getenv("DINGTALK_WEBHOOK_URL"):
+                config["webhook_url"] = os.getenv("DINGTALK_WEBHOOK_URL")
+            if os.getenv("DINGTALK_MSG_TYPE"):
+                config["msg_type"] = os.getenv("DINGTALK_MSG_TYPE")
+        
         return config
 
     def _create_channels_from_env_vars(self) -> List[NotificationChannel]:
@@ -843,6 +865,48 @@ class ConfigManager:
                 name="ntfy",
                 enabled=True,
                 config=ntfy_config
+            ))
+        
+        # 飞书
+        if os.getenv("FEISHU_WEBHOOK_URL"):
+            feishu_config = {
+                "webhook_url": os.getenv("FEISHU_WEBHOOK_URL")
+            }
+            if os.getenv("FEISHU_MSG_TYPE"):
+                feishu_config["msg_type"] = os.getenv("FEISHU_MSG_TYPE")
+            
+            channels.append(NotificationChannel(
+                name="feishu",
+                enabled=True,
+                config=feishu_config
+            ))
+        
+        # 企业微信
+        if os.getenv("WEWORK_WEBHOOK_URL"):
+            wework_config = {
+                "webhook_url": os.getenv("WEWORK_WEBHOOK_URL")
+            }
+            if os.getenv("WEWORK_MSG_TYPE"):
+                wework_config["msg_type"] = os.getenv("WEWORK_MSG_TYPE")
+            
+            channels.append(NotificationChannel(
+                name="wework",
+                enabled=True,
+                config=wework_config
+            ))
+        
+        # 钉钉
+        if os.getenv("DINGTALK_WEBHOOK_URL"):
+            dingtalk_config = {
+                "webhook_url": os.getenv("DINGTALK_WEBHOOK_URL")
+            }
+            if os.getenv("DINGTALK_MSG_TYPE"):
+                dingtalk_config["msg_type"] = os.getenv("DINGTALK_MSG_TYPE")
+            
+            channels.append(NotificationChannel(
+                name="dingtalk",
+                enabled=True,
+                config=dingtalk_config
             ))
         
         if channels:
@@ -1418,6 +1482,12 @@ class NotificationService:
                 return self._send_bark(message, channel.config)
             elif channel.name == "ntfy":
                 return self._send_ntfy(message, channel.config)
+            elif channel.name == "feishu":
+                return self._send_feishu(message, channel.config)
+            elif channel.name == "wework":
+                return self._send_wework(message, channel.config)
+            elif channel.name == "dingtalk":
+                return self._send_dingtalk(message, channel.config)
             else:
                 logging.warning(f"⚠️ 未知的通知通道: {channel.name}")
                 return False
@@ -1612,6 +1682,127 @@ class NotificationService:
         except Exception as e:
             logging.error(f"❌ Ntfy通知发送失败: {e}")
             return False
+
+    def _send_feishu(self, message: str, config: Dict[str, Any]) -> bool:
+        """发送飞书通知"""
+        if not config.get("webhook_url"):
+            logging.error("❌ 飞书Webhook URL未配置")
+            return False
+
+        # 飞书支持两种消息格式：text和rich_text
+        msg_type = config.get("msg_type", "text")
+        
+        if msg_type == "rich_text":
+            # 富文本格式
+            data = {
+                "msg_type": "post",
+                "content": {
+                    "post": {
+                        "zh_cn": {
+                            "title": "微信读书自动阅读报告",
+                            "content": [
+                                [
+                                    {
+                                        "tag": "text",
+                                        "text": message
+                                    }
+                                ]
+                            ]
+                        }
+                    }
+                }
+            }
+        else:
+            # 纯文本格式
+            data = {
+                "msg_type": "text",
+                "content": {
+                    "text": f"微信读书自动阅读报告\n\n{message}"
+                }
+            }
+
+        return self._send_http_notification(config["webhook_url"], data, "飞书")
+
+    def _send_wework(self, message: str, config: Dict[str, Any]) -> bool:
+        """发送企业微信通知"""
+        if not config.get("webhook_url"):
+            logging.error("❌ 企业微信Webhook URL未配置")
+            return False
+
+        # 企业微信支持text、markdown、news等格式
+        msg_type = config.get("msg_type", "text")
+        
+        if msg_type == "markdown":
+            # Markdown格式
+            data = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "content": f"## 微信读书自动阅读报告\n\n{message}"
+                }
+            }
+        elif msg_type == "news":
+            # 图文消息格式
+            data = {
+                "msgtype": "news",
+                "news": {
+                    "articles": [
+                        {
+                            "title": "微信读书自动阅读报告",
+                            "description": message[:200] + "..." if len(message) > 200 else message,
+                            "url": "https://weread.qq.com"
+                        }
+                    ]
+                }
+            }
+        else:
+            # 纯文本格式
+            data = {
+                "msgtype": "text",
+                "text": {
+                    "content": f"微信读书自动阅读报告\n\n{message}"
+                }
+            }
+
+        return self._send_http_notification(config["webhook_url"], data, "企业微信")
+
+    def _send_dingtalk(self, message: str, config: Dict[str, Any]) -> bool:
+        """发送钉钉通知"""
+        if not config.get("webhook_url"):
+            logging.error("❌ 钉钉Webhook URL未配置")
+            return False
+
+        # 钉钉支持text、markdown、link等格式
+        msg_type = config.get("msg_type", "text")
+        
+        if msg_type == "markdown":
+            # Markdown格式
+            data = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": "微信读书自动阅读报告",
+                    "text": f"## 微信读书自动阅读报告\n\n{message}"
+                }
+            }
+        elif msg_type == "link":
+            # 链接消息格式
+            data = {
+                "msgtype": "link",
+                "link": {
+                    "text": message[:200] + "..." if len(message) > 200 else message,
+                    "title": "微信读书自动阅读报告",
+                    "messageUrl": "https://weread.qq.com"
+                }
+            }
+        else:
+            # 纯文本格式
+            data = {
+                "msgtype": "text",
+                "text": {
+                    "content": f"微信读书自动阅读报告\n\n{message}"
+                }
+            }
+
+        return self._send_http_notification(config["webhook_url"], data, "钉钉")
 
 
 class CronParser:
@@ -2147,10 +2338,10 @@ class WeReadSessionManager:
                         
                         # 确保用户身份标识符的完整性和正确性
                         self._validate_and_log_user_identity()
-                        
+
                         logging.info(
-                            f"✅ 用户 {self.user_name} 已使用CURL中的请求数据，包含字段: "
-                            f"{list(curl_data.keys())}"
+                            f"✅ 用户 {self.user_name} 已使用CURL中的请求数据，"
+                            f"包含字段: {list(curl_data.keys())}"
                         )
 
                         # 设置智能阅读管理器的CURL数据起点
@@ -2161,19 +2352,24 @@ class WeReadSessionManager:
                                 curl_data['b'], curl_data['c']
                             )
                             # 如果阅读管理器没有设置章节索引，则使用CURL中的值
-                            if (self.reading_manager.current_chapter_ci is None 
-                                and curl_ci is not None):
+                            if (self.reading_manager.current_chapter_ci is None
+                                    and curl_ci is not None):
                                 self.reading_manager.current_chapter_ci = curl_ci
-                                logging.info(f"📋 使用CURL中的章节索引: ci={curl_ci}")
+                                logging.info(
+                                    f"📋 使用CURL中的章节索引: ci={curl_ci}"
+                                )
                     else:
                         logging.warning(
-                            f"⚠️ 用户 {self.user_name} CURL数据缺少必需字段: {missing_fields}，"
-                            "使用默认数据"
+                            f"⚠️ 用户 {self.user_name} CURL数据缺少必需字段: "
+                            f"{missing_fields}，使用默认数据"
                         )
                         # 初始化阅读管理器使用配置数据
                         self.reading_manager.set_curl_data("", "")
                 else:
-                    logging.info(f"ℹ️ 用户 {self.user_name} CURL命令中未找到请求数据，使用默认数据")
+                    logging.info(
+                        f"ℹ️ 用户 {self.user_name} CURL命令中未找到请求数据，"
+                        f"使用默认数据"
+                    )
                     self.reading_manager.set_curl_data("", "")
 
                 logging.info(f"✅ 用户 {self.user_name} CURL配置解析成功")
@@ -2184,8 +2380,8 @@ class WeReadSessionManager:
             error_msg = f"❌ 用户 {self.user_name} 未找到有效的CURL配置"
             logging.error(error_msg)
             raise ValueError(
-                f"用户 {self.user_name} 未找到有效的CURL配置，请检查 WEREAD_CURL_BASH_FILE_PATH 或 "
-                "WEREAD_CURL_STRING"
+                f"用户 {self.user_name} 未找到有效的CURL配置，"
+                f"请检查 WEREAD_CURL_BASH_FILE_PATH 或 WEREAD_CURL_STRING"
             )
 
     def _validate_and_log_user_identity(self):
@@ -2197,13 +2393,15 @@ class WeReadSessionManager:
         # 记录用户身份信息（用于调试）
         logging.info(
             f"🔍 用户 {self.user_name} 身份验证: "
-            f"ps={ps_value[:8]}***, pc={pc_value[:8]}***, appId={app_id[:8]}***"
+            f"ps={ps_value[:8]}***, pc={pc_value[:8]}***, "
+            f"appId={app_id[:8]}***"
         )
         
         # 验证关键身份字段是否存在
         if ps_value == 'N/A' or pc_value == 'N/A':
             logging.warning(
-                f"⚠️ 用户 {self.user_name} 缺少关键身份标识符: ps={ps_value}, pc={pc_value}"
+                f"⚠️ 用户 {self.user_name} 缺少关键身份标识符: "
+                f"ps={ps_value}, pc={pc_value}"
             )
         
         # 保存用户特定的身份标识符，确保在整个会话期间保持不变
@@ -2217,7 +2415,8 @@ class WeReadSessionManager:
                 self.config.human_simulation.rotate_user_agent):
             self.session_user_agent = UserAgentRotator.get_random_user_agent()
             logging.info(
-                f"🔄 用户 {self.user_name} 会话User-Agent已设置: {self.session_user_agent[:50]}..."
+                f"🔄 用户 {self.user_name} 会话User-Agent已设置: "
+                f"{self.session_user_agent[:50]}..."
             )
         else:
             # 如果没有启用轮换，使用CURL中的User-Agent或保持空
@@ -2337,9 +2536,7 @@ class WeReadSessionManager:
         self.data.pop('s', None)
 
         # 使用智能阅读管理器获取下一个阅读位置
-        book_id, chapter_id = (
-            self.reading_manager.get_next_reading_position()
-        )
+        book_id, chapter_id = self.reading_manager.get_next_reading_position()
         self.data['b'] = book_id
         self.data['c'] = chapter_id
         
@@ -2347,7 +2544,9 @@ class WeReadSessionManager:
         chapter_ci = self.reading_manager.current_chapter_ci
         if chapter_ci is not None:
             self.data['ci'] = chapter_ci
-            logging.debug(f"🔢 设置章节索引: ci={chapter_ci} (章节: {chapter_id})")
+            logging.debug(
+                f"🔢 设置章节索引: ci={chapter_ci} (章节: {chapter_id})"
+            )
 
         # 记录阅读内容
         if book_id not in self.session_stats.books_read:
@@ -2370,7 +2569,8 @@ class WeReadSessionManager:
             
             logging.debug(
                 f"🔒 用户 {self.user_name} 身份确认: ps={self.user_ps[:10]}..., "
-                f"pc={self.user_pc[:10]}..., book={book_id[:10]}..., chapter={chapter_id[:10]}..."
+                f"pc={self.user_pc[:10]}..., book={book_id[:10]}..., "
+                f"chapter={chapter_id[:10]}..."
             )
 
         # 更新时间戳
@@ -2406,11 +2606,15 @@ class WeReadSessionManager:
                     logging.debug(f"✅ 请求成功: {response_data}")
                     return True, response_time
                 else:
-                    logging.warning(f"❌ 无synckey，尝试修复... 响应: {response_data}")
+                    logging.warning(
+                        f"❌ 无synckey，尝试修复... 响应: {response_data}"
+                    )
                     self._fix_no_synckey()
                     return False, response_time
             else:
-                logging.warning(f"❌ 请求失败，可能Cookie过期: {response_data}")
+                logging.warning(
+                    f"❌ 请求失败，可能Cookie过期: {response_data}"
+                )
                 logging.info(
                     f"🔍 失败的请求数据: book_id={self.data.get('b')}, "
                     f"chapter_id={self.data.get('c')}"

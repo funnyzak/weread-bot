@@ -66,11 +66,50 @@ Fork 完成后，需要在你的仓库中配置必要的环境变量：
 |------------|------|
 | `APPRISE_URL` | Apprise 通知 URL |
 
+> **获取方式**：支持 Discord、Slack、Email 等数十种服务，详见 [Apprise 文档](https://github.com/caronc/apprise)
+
+**飞书通知**
+| Secret 名称 | 说明 |
+|------------|------|
+| `FEISHU_WEBHOOK_URL` | 飞书机器人 Webhook URL |
+| `FEISHU_MSG_TYPE` | 消息类型：text/rich_text（可选） |
+
+> **获取方式**：
+> 1. 在飞书桌面版群聊中添加机器人
+> 2. 选择"自定义机器人"
+> 3. 获取 Webhook URL
+> 4. 示例：`https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook_token`
+
+**企业微信通知**
+| Secret 名称 | 说明 |
+|------------|------|
+| `WEWORK_WEBHOOK_URL` | 企业微信机器人 Webhook URL |
+| `WEWORK_MSG_TYPE` | 消息类型：text/markdown/news（可选） |
+
+> **获取方式**：
+> 1. 在企业微信群聊中添加机器人
+> 2. 选择"自定义机器人"
+> 3. 获取 Webhook URL
+> 4. 示例：`https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your_webhook_key`
+
+**钉钉通知**
+| Secret 名称 | 说明 |
+|------------|------|
+| `DINGTALK_WEBHOOK_URL` | 钉钉机器人 Webhook URL |
+| `DINGTALK_MSG_TYPE` | 消息类型：text/markdown/link（可选） |
+
+> **获取方式**：
+> 1. 在钉钉群聊中添加机器人
+> 2. 选择"自定义机器人"
+> 3. 获取 Webhook URL
+> 4. 示例：`https://oapi.dingtalk.com/robot/send?access_token=your_access_token`
+
 **代理配置（可选）**
 | Secret 名称 | 说明 |
 |------------|------|
 | `HTTP_PROXY` | HTTP 代理地址 |
 | `HTTPS_PROXY` | HTTPS 代理地址 |
+
 
 ### 步骤 3: 启用 GitHub Actions
 

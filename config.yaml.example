@@ -151,6 +151,33 @@ notification:
         topic: "your_ntfy_topic_here"
         # 访问令牌（可选，用于私有主题）
         token: "your_ntfy_token_here"
+    
+    # 通道7：飞书
+    - name: "feishu"
+      enabled: false
+      config:
+        # 飞书机器人Webhook URL
+        webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook_token"
+        # 消息类型：text(纯文本), rich_text(富文本)
+        msg_type: "text"
+    
+    # 通道8：企业微信
+    - name: "wework"
+      enabled: false
+      config:
+        # 企业微信机器人Webhook URL
+        webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your_webhook_key"
+        # 消息类型：text(纯文本), markdown(Markdown), news(图文)
+        msg_type: "text"
+    
+    # 通道9：钉钉
+    - name: "dingtalk"
+      enabled: false
+      config:
+        # 钉钉机器人Webhook URL
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=your_access_token"
+        # 消息类型：text(纯文本), markdown(Markdown), link(链接)
+        msg_type: "text"
 
 # 定时任务配置（仅在startup_mode为scheduled时生效）
 schedule:

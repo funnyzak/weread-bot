@@ -19,7 +19,7 @@ WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真
 - 🤖 **高级行为模拟**：模拟真实用户阅读行为，包括阅读速度变化、中途休息等
 - ⚙️ **多样化配置**：支持配置文件、环境变量、命令行参数三种设置方式，灵活适配各种部署环境
 - 📊 **详细统计报告**：提供完整的阅读数据、成功率统计和多维度分析
-- 📱 **多平台消息推送**：支持 PushPlus、Telegram、WxPusher、Apprise、Bark、Ntfy 等通知服务
+- 📱 **多平台消息推送**：支持 PushPlus、Telegram、WxPusher、Apprise、Bark、Ntfy、飞书、企业微信、钉钉 等通知服务
 - 🔧 **智能配置解析**：自动从 CURL 命令提取请求数据、headers 和 cookies，无需手动配置
 - 🎯 **精准请求模拟**：使用真实抓包数据，动态生成签名和校验，大幅提高成功率
 - 🕐 **灵活定时任务**：支持 cron 表达式定时执行，可自定义执行频率和时间
@@ -229,6 +229,12 @@ docker run -d --name weread-bot \
 | Ntfy | `server` | `NTFY_SERVER` | Ntfy服务器地址 |
 | | `topic` | `NTFY_TOPIC` | Ntfy推送主题 |
 | | `token` | `NTFY_TOKEN` | Ntfy访问令牌（可选） |
+| 飞书 | `webhook_url` | `FEISHU_WEBHOOK_URL` | 飞书机器人Webhook URL |
+| | `msg_type` | `FEISHU_MSG_TYPE` | 消息类型：text/rich_text |
+| 企业微信 | `webhook_url` | `WEWORK_WEBHOOK_URL` | 企业微信机器人Webhook URL |
+| | `msg_type` | `WEWORK_MSG_TYPE` | 消息类型：text/markdown/news |
+| 钉钉 | `webhook_url` | `DINGTALK_WEBHOOK_URL` | 钉钉机器人Webhook URL |
+| | `msg_type` | `DINGTALK_MSG_TYPE` | 消息类型：text/markdown/link |
 
 ### 通知方式详细说明
 
@@ -263,6 +269,33 @@ docker run -d --name weread-bot \
 - 获取方式：使用公共服务 [ntfy.sh](https://ntfy.sh) 或自建服务
 - 配置：设置 `NTFY_SERVER` 和 `NTFY_TOPIC`
 - 私有主题：可选设置 `NTFY_TOKEN`
+
+#### 飞书（Lark）
+- 获取方式：
+  1. 在飞书群聊中添加机器人
+  2. 选择"自定义机器人"
+  3. 获取Webhook URL
+- 配置：设置 `FEISHU_WEBHOOK_URL`
+- 消息格式：支持 `text`（纯文本）和 `rich_text`（富文本）
+- 示例：`https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook_token`
+
+#### 企业微信
+- 获取方式：
+  1. 在企业微信群聊中添加机器人
+  2. 选择"自定义机器人"
+  3. 获取Webhook URL
+- 配置：设置 `WEWORK_WEBHOOK_URL`
+- 消息格式：支持 `text`（纯文本）、`markdown`（Markdown格式）、`news`（图文消息）
+- 示例：`https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your_webhook_key`
+
+#### 钉钉
+- 获取方式：
+  1. 在钉钉群聊中添加机器人
+  2. 选择"自定义机器人"
+  3. 获取Webhook URL
+- 配置：设置 `DINGTALK_WEBHOOK_URL`
+- 消息格式：支持 `text`（纯文本）、`markdown`（Markdown格式）、`link`（链接消息）
+- 示例：`https://oapi.dingtalk.com/robot/send?access_token=your_access_token`
 
 ### 定时任务配置（scheduled模式）
 | 配置项 | 环境变量 | 默认值 | 说明 |
@@ -719,6 +752,33 @@ notification:
         topic: "${NTFY_TOPIC}"
         # 访问令牌（可选，用于私有主题）
         token: "${NTFY_TOKEN}"
+    
+    # 通道7：飞书
+    - name: "feishu"
+      enabled: false
+      config:
+        # 飞书机器人Webhook URL
+        webhook_url: "${FEISHU_WEBHOOK_URL}"
+        # 消息类型：text(纯文本), rich_text(富文本)
+        msg_type: "text"
+    
+    # 通道8：企业微信
+    - name: "wework"
+      enabled: false
+      config:
+        # 企业微信机器人Webhook URL
+        webhook_url: "${WEWORK_WEBHOOK_URL}"
+        # 消息类型：text(纯文本), markdown(Markdown), news(图文)
+        msg_type: "text"
+    
+    # 通道9：钉钉
+    - name: "dingtalk"
+      enabled: false
+      config:
+        # 钉钉机器人Webhook URL
+        webhook_url: "${DINGTALK_WEBHOOK_URL}"
+        # 消息类型：text(纯文本), markdown(Markdown), link(链接)
+        msg_type: "text"
 ```
 
 ## 微信读书API字段说明
