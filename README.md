@@ -61,33 +61,7 @@ python weread-bot.py
 
 > 请将第 3 步中的 `curl_command.txt` 替换为实际保存CURL命令的文件路径。获取CURL命令详见[抓包配置详解](#🔧-抓包配置详解)
 
-### 方式二：配置生成器（推荐新手）
-
-使用在线配置生成器，通过可视化界面生成配置文件：
-
-```bash
-# 访问在线配置生成器
-open https://weread.gh.yycc.dev/config-generator.html
-
-# 或本地运行配置生成器
-wget https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/config-generator.html
-open config-generator.html
-```
-
-**在线访问地址：**
-- 🌐 **配置生成器**: https://weread.gh.yycc.dev/config-generator.html
-- 📖 **项目文档**: https://weread.gh.yycc.dev/
-
-**配置生成器特性：**
-- 🎨 **可视化界面**：直观的表单界面，分步引导配置
-- ✅ **实时验证**：输入时自动验证配置格式和有效性
-- 📱 **响应式设计**：支持桌面和移动设备
-- 🔄 **实时预览**：配置更改即时预览YAML输出
-- 📥 **一键下载**：生成的配置文件可直接下载使用
-- ⌨️ **键盘快捷键**：支持Ctrl+S保存、方向键导航
-- 💾 **自动保存**：配置自动保存到本地存储
-
-### 方式三：配置文件运行
+### 方式二：配置文件运行
 
 ```bash
 # 1. 下载配置模板
@@ -103,7 +77,7 @@ vim config.yaml
 python weread-bot.py --config config.yaml
 ```
 
-### 方式四：多用户运行
+### 方式三：多用户运行
 
 ```bash
 # 1. 下载配置模板
@@ -133,7 +107,7 @@ python weread-bot.py --config multiuser-config.yaml
 
 > **详细配置指南**: [GitHub Actions 自动阅读配置指南](https://github.com/funnyzak/weread-bot/blob/main/docs/github-action-autoread-guide.md)
 
-### 方式六：不同运行模式
+### 方式五：不同运行模式
 
 ```bash
 # 立即执行（默认）
@@ -149,7 +123,7 @@ python weread-bot.py --mode daemon
 python weread-bot.py --verbose
 ```
 
-### 方式七：Docker 方式运行
+### 方式六：Docker 方式运行
 
 使用一行命令单次运行：
 
@@ -170,6 +144,23 @@ docker run -d --name weread-bot \
 ## 配置说明
 
 配置项可通过环境变量或配置文件设置，优先级为：环境变量 > 配置文件 > 程序默认值。 配置文件模板见 [`config.yaml.example`](https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/config.yaml.example)。
+
+### 配置生成器（推荐新手）
+
+使用在线配置生成器，通过可视化界面生成配置文件：
+
+```bash
+# 访问在线配置生成器
+open https://weread.gh.yycc.dev/config-generator.html
+
+# 或本地运行配置生成器
+wget https://raw.githubusercontent.com/funnyzak/weread-bot/refs/heads/main/config-generator.html
+open config-generator.html
+```
+
+**在线访问地址：**
+- 🌐 **配置生成器**: https://weread.gh.yycc.dev/config-generator.html
+- 📖 **项目文档**: https://weread.gh.yycc.dev/
 
 ### 必需配置
 
