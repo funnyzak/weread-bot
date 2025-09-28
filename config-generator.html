@@ -1,0 +1,1388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WeRead Bot 配置生成器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <script src="https://unpkg.com/js-yaml@4.1.0/dist/js-yaml.js"></script>
+    <style>
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .step-indicator { transition: all 0.3s ease; }
+        .step-indicator.active { background-color: rgb(99 102 241); color: white; }
+        .step-indicator.completed { background-color: rgb(34 197 94); color: white; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Header -->
+    <header class="bg-white shadow-sm border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center py-6">
+                <div class="flex items-center">
+                    <i data-lucide="book-open" class="w-8 h-8 text-indigo-600 mr-3"></i>
+                    <div>
+                        <h1 class="text-2xl font-bold text-gray-900">WeRead Bot 配置生成器</h1>
+                        <p class="text-sm text-gray-600">轻松生成微信读书机器人配置文件</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button onclick="resetConfig()" class="px-4 py-2 text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        <i data-lucide="refresh-cw" class="w-4 h-4 mr-2 inline"></i>
+                        重置
+                    </button>
+                    <button onclick="loadExample()" class="px-4 py-2 text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                        <i data-lucide="file-text" class="w-4 h-4 mr-2 inline"></i>
+                        加载示例
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Progress Steps -->
+    <div class="bg-white border-b">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="step-indicator active rounded-full w-10 h-10 flex items-center justify-center text-sm font-medium border-2 border-indigo-600" data-step="1">
+                        1
+                    </div>
+                    <div class="flex-1 h-1 bg-gray-200">
+                        <div class="h-1 bg-indigo-600 transition-all duration-300" id="progress-1" style="width: 0%"></div>
+                    </div>
+                    <div class="step-indicator rounded-full w-10 h-10 flex items-center justify-center text-sm font-medium border-2 border-gray-300" data-step="2">
+                        2
+                    </div>
+                    <div class="flex-1 h-1 bg-gray-200">
+                        <div class="h-1 bg-indigo-600 transition-all duration-300" id="progress-2" style="width: 0%"></div>
+                    </div>
+                    <div class="step-indicator rounded-full w-10 h-10 flex items-center justify-center text-sm font-medium border-2 border-gray-300" data-step="3">
+                        3
+                    </div>
+                    <div class="flex-1 h-1 bg-gray-200">
+                        <div class="h-1 bg-indigo-600 transition-all duration-300" id="progress-3" style="width: 0%"></div>
+                    </div>
+                    <div class="step-indicator rounded-full w-10 h-10 flex items-center justify-center text-sm font-medium border-2 border-gray-300" data-step="4">
+                        4
+                    </div>
+                </div>
+                <div class="text-sm text-gray-600">
+                    第 <span id="current-step">1</span> 步，共 4 步
+                </div>
+            </div>
+            <div class="flex items-center justify-between mt-4">
+                <div class="text-center" style="width: 80px;">
+                    <div class="text-sm font-medium text-gray-900">基础配置</div>
+                </div>
+                <div class="text-center" style="width: 80px;">
+                    <div class="text-sm font-medium text-gray-900">阅读配置</div>
+                </div>
+                <div class="text-center" style="width: 80px;">
+                    <div class="text-sm font-medium text-gray-900">通知配置</div>
+                </div>
+                <div class="text-center" style="width: 80px;">
+                    <div class="text-sm font-medium text-gray-900">多用户配置</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Form Panel -->
+            <div class="lg:col-span-2">
+                <div class="bg-white rounded-lg shadow-sm border">
+                    <div class="p-6">
+                        <!-- Step 1: Basic Configuration -->
+                        <div id="step-1" class="tab-content active">
+                            <div class="mb-6">
+                                <h2 class="text-xl font-semibold text-gray-900 mb-2">基础配置</h2>
+                                <p class="text-gray-600">设置应用的基本运行参数</p>
+                            </div>
+
+                            <div class="space-y-6">
+                                <!-- App Name -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">应用名称</label>
+                                    <input type="text" id="appName" value="WeReadBot"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                </div>
+
+                                <!-- Startup Mode -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">启动模式</label>
+                                    <select id="startupMode" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                        <option value="immediate">立即执行</option>
+                                        <option value="scheduled">定时执行</option>
+                                        <option value="daemon">守护进程</option>
+                                    </select>
+                                </div>
+
+                                <!-- Startup Delay -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">启动延迟（秒）</label>
+                                    <input type="text" id="startupDelay" value="1-10" placeholder="例如: 1-10"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                    <p class="text-xs text-gray-500 mt-1">支持范围值，如 1-10 表示1到10秒随机</p>
+                                </div>
+
+                                <!-- CURL Configuration -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">CURL配置方式</label>
+                                    <div class="space-y-3">
+                                        <label class="flex items-center">
+                                            <input type="radio" name="curlType" value="file" checked class="mr-2">
+                                            <span>文件路径</span>
+                                        </label>
+                                        <label class="flex items-center">
+                                            <input type="radio" name="curlType" value="content" class="mr-2">
+                                            <span>直接内容</span>
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <!-- CURL File Path -->
+                                <div id="curlFileGroup">
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">CURL文件路径</label>
+                                    <input type="text" id="curlFilePath" value="curl_command.txt" placeholder="例如: curl_command.txt"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                </div>
+
+                                <!-- CURL Content -->
+                                <div id="curlContentGroup" class="hidden">
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">CURL命令内容</label>
+                                    <textarea id="curlContent" rows="4" placeholder="粘贴完整的curl命令..."
+                                              class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
+                                </div>
+
+                                <!-- Log Level -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">日志级别</label>
+                                    <select id="logLevel" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                        <option value="DEBUG">DEBUG</option>
+                                        <option value="INFO" selected>INFO</option>
+                                        <option value="WARNING">WARNING</option>
+                                        <option value="ERROR">ERROR</option>
+                                        <option value="CRITICAL">CRITICAL</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 2: Reading Configuration -->
+                        <div id="step-2" class="tab-content">
+                            <div class="mb-6">
+                                <h2 class="text-xl font-semibold text-gray-900 mb-2">阅读配置</h2>
+                                <p class="text-gray-600">设置阅读行为和策略参数</p>
+                            </div>
+
+                            <div class="space-y-6">
+                                <!-- Reading Mode -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">阅读模式</label>
+                                    <select id="readingMode" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                        <option value="smart_random">智能随机</option>
+                                        <option value="sequential">顺序阅读</option>
+                                        <option value="pure_random">纯随机</option>
+                                    </select>
+                                </div>
+
+                                <!-- Target Duration -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">目标阅读时长（分钟）</label>
+                                    <input type="text" id="targetDuration" value="60-70" placeholder="例如: 60-70"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                </div>
+
+                                <!-- Reading Interval -->
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">阅读间隔（秒）</label>
+                                    <input type="text" id="readingInterval" value="25-35" placeholder="例如: 25-35"
+                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                </div>
+
+                                <!-- Smart Random Settings -->
+                                <div id="smartRandomSettings">
+                                    <h3 class="text-lg font-medium text-gray-900 mb-4">智能随机设置</h3>
+
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-2">书籍连续性</label>
+                                            <input type="range" id="bookContinuity" min="0" max="1" step="0.1" value="0.8"
+                                                   class="w-full" oninput="updateRangeValue('bookContinuity', this.value)">
+                                            <div class="flex justify-between text-xs text-gray-500">
+                                                <span>0%</span>
+                                                <span id="bookContinuityValue">80%</span>
+                                                <span>100%</span>
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-2">章节连续性</label>
+                                            <input type="range" id="chapterContinuity" min="0" max="1" step="0.1" value="0.7"
+                                                   class="w-full" oninput="updateRangeValue('chapterContinuity', this.value)">
+                                            <div class="flex justify-between text-xs text-gray-500">
+                                                <span>0%</span>
+                                                <span id="chapterContinuityValue">70%</span>
+                                                <span>100%</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-4">
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">换书冷却时间（秒）</label>
+                                        <input type="number" id="bookSwitchCooldown" value="300" min="0"
+                                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                    </div>
+                                </div>
+
+                                <!-- Human Simulation -->
+                                <div>
+                                    <h3 class="text-lg font-medium text-gray-900 mb-4">人类行为模拟</h3>
+
+                                    <div class="space-y-4">
+                                        <label class="flex items-center">
+                                            <input type="checkbox" id="humanSimulationEnabled" checked class="mr-2">
+                                            <span>启用人类行为模拟</span>
+                                        </label>
+
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">休息概率</label>
+                                                <input type="range" id="breakProbability" min="0" max="1" step="0.05" value="0.15"
+                                                       class="w-full" oninput="updateRangeValue('breakProbability', this.value)">
+                                                <div class="flex justify-between text-xs text-gray-500">
+                                                    <span>0%</span>
+                                                    <span id="breakProbabilityValue">15%</span>
+                                                    <span>100%</span>
+                                                </div>
+                                            </div>
+
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">休息时长（秒）</label>
+                                                <input type="text" id="breakDuration" value="30-180" placeholder="例如: 30-180"
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Network Settings -->
+                                <div>
+                                    <h3 class="text-lg font-medium text-gray-900 mb-4">网络设置</h3>
+
+                                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-2">超时时间（秒）</label>
+                                            <input type="number" id="networkTimeout" value="30" min="1"
+                                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-2">重试次数</label>
+                                            <input type="number" id="retryTimes" value="3" min="0"
+                                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 3: Notification Configuration -->
+                        <div id="step-3" class="tab-content">
+                            <div class="mb-6">
+                                <h2 class="text-xl font-semibold text-gray-900 mb-2">通知配置</h2>
+                                <p class="text-gray-600">配置消息推送服务</p>
+                            </div>
+
+                            <div class="space-y-6">
+                                <!-- Notification Toggle -->
+                                <div>
+                                    <label class="flex items-center">
+                                        <input type="checkbox" id="notificationEnabled" checked class="mr-2">
+                                        <span class="text-sm font-medium text-gray-700">启用通知功能</span>
+                                    </label>
+                                </div>
+
+                                <!-- Include Statistics -->
+                                <div>
+                                    <label class="flex items-center">
+                                        <input type="checkbox" id="includeStatistics" checked class="mr-2">
+                                        <span class="text-sm font-medium text-gray-700">包含详细统计信息</span>
+                                    </label>
+                                </div>
+
+                                <!-- Notification Channels -->
+                                <div id="notificationChannels">
+                                    <h3 class="text-lg font-medium text-gray-900 mb-4">通知通道</h3>
+
+                                    <div class="space-y-4">
+                                        <!-- PushPlus -->
+                                        <div class="border border-gray-200 rounded-lg p-4">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <label class="flex items-center">
+                                                    <input type="checkbox" class="channel-checkbox mr-2" data-channel="pushplus">
+                                                    <span class="font-medium">PushPlus</span>
+                                                </label>
+                                                <span class="text-xs text-gray-500">推荐</span>
+                                            </div>
+                                            <div class="channel-config hidden" data-channel-config="pushplus">
+                                                <input type="text" placeholder="请输入 PushPlus Token"
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                       data-channel-input="pushplus-token">
+                                            </div>
+                                        </div>
+
+                                        <!-- Telegram -->
+                                        <div class="border border-gray-200 rounded-lg p-4">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <label class="flex items-center">
+                                                    <input type="checkbox" class="channel-checkbox mr-2" data-channel="telegram">
+                                                    <span class="font-medium">Telegram</span>
+                                                </label>
+                                            </label>
+                                            </div>
+                                            <div class="channel-config hidden" data-channel-config="telegram">
+                                                <div class="space-y-3">
+                                                    <input type="text" placeholder="Bot Token"
+                                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                           data-channel-input="telegram-bot_token">
+                                                    <input type="text" placeholder="Chat ID"
+                                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                           data-channel-input="telegram-chat_id">
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- WxPusher -->
+                                        <div class="border border-gray-200 rounded-lg p-4">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <label class="flex items-center">
+                                                    <input type="checkbox" class="channel-checkbox mr-2" data-channel="wxpusher">
+                                                    <span class="font-medium">WxPusher</span>
+                                                </label>
+                                            </div>
+                                            <div class="channel-config hidden" data-channel-config="wxpusher">
+                                                <input type="text" placeholder="请输入 WxPusher SPT"
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                       data-channel-input="wxpusher-spt">
+                                            </div>
+                                        </div>
+
+                                        <!-- Bark -->
+                                        <div class="border border-gray-200 rounded-lg p-4">
+                                            <div class="flex items-center justify-between mb-3">
+                                                <label class="flex items-center">
+                                                    <input type="checkbox" class="channel-checkbox mr-2" data-channel="bark">
+                                                    <span class="font-medium">Bark (iOS)</span>
+                                                </label>
+                                            </div>
+                                            <div class="channel-config hidden" data-channel-config="bark">
+                                                <div class="space-y-3">
+                                                    <input type="text" placeholder="服务器地址 (默认: https://api.day.app)"
+                                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                           data-channel-input="bark-server">
+                                                    <input type="text" placeholder="设备密钥"
+                                                           class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                                           data-channel-input="bark-device_key">
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Add more channels as needed -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Step 4: Multi-user Configuration -->
+                        <div id="step-4" class="tab-content">
+                            <div class="mb-6">
+                                <h2 class="text-xl font-semibold text-gray-900 mb-2">多用户配置</h2>
+                                <p class="text-gray-600">配置多个微信读书账号</p>
+                            </div>
+
+                            <div class="space-y-6">
+                                <!-- Multi-user Toggle -->
+                                <div>
+                                    <label class="flex items-center">
+                                        <input type="checkbox" id="multiUserEnabled" class="mr-2" onchange="toggleMultiUser()">
+                                        <span class="text-sm font-medium text-gray-700">启用多用户模式</span>
+                                    </label>
+                                </div>
+
+                                <!-- Users List -->
+                                <div id="usersList" class="hidden">
+                                    <div class="flex items-center justify-between mb-4">
+                                        <h3 class="text-lg font-medium text-gray-900">用户列表</h3>
+                                        <button onclick="addUser()" class="px-3 py-1 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                                            <i data-lucide="plus" class="w-4 h-4 mr-1 inline"></i>
+                                            添加用户
+                                        </button>
+                                    </div>
+
+                                    <div id="usersContainer" class="space-y-4">
+                                        <!-- Users will be added here dynamically -->
+                                    </div>
+                                </div>
+
+                                <!-- Schedule Configuration -->
+                                <div id="scheduleConfig">
+                                    <h3 class="text-lg font-medium text-gray-900 mb-4">定时任务配置</h3>
+
+                                    <div class="space-y-4">
+                                        <div>
+                                            <label class="flex items-center">
+                                                <input type="checkbox" id="scheduleEnabled" class="mr-2">
+                                                <span class="text-sm font-medium text-gray-700">启用定时任务</span>
+                                            </label>
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-2">Cron表达式</label>
+                                            <select id="cronExpression" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                                <option value="0 */2 * * *">每2小时执行一次</option>
+                                                <option value="0 */4 * * *">每4小时执行一次</option>
+                                                <option value="0 */6 * * *">每6小时执行一次</option>
+                                                <option value="30 9,18 * * *">每天9:30和18:30执行</option>
+                                                <option value="0 9 * * *">每天9:00执行</option>
+                                                <option value="0 22 * * *">每天22:00执行</option>
+                                            </select>
+                                        </div>
+
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-2">时区</label>
+                                            <select id="timezone" class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                                <option value="Asia/Shanghai">Asia/Shanghai</option>
+                                                <option value="Asia/Beijing">Asia/Beijing</option>
+                                                <option value="UTC">UTC</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Daemon Configuration -->
+                                <div id="daemonConfig">
+                                    <h3 class="text-lg font-medium text-gray-900 mb-4">守护进程配置</h3>
+
+                                    <div class="space-y-4">
+                                        <div>
+                                            <label class="flex items-center">
+                                                <input type="checkbox" id="daemonEnabled" class="mr-2">
+                                                <span class="text-sm font-medium text-gray-700">启用守护进程模式</span>
+                                            </label>
+                                        </div>
+
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">会话间隔（分钟）</label>
+                                                <input type="text" id="sessionInterval" value="120-180" placeholder="例如: 120-180"
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                            </div>
+
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">每日最大会话数</label>
+                                                <input type="number" id="maxDailySessions" value="12" min="1"
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Navigation Buttons -->
+                        <div class="flex justify-between mt-8 pt-6 border-t">
+                            <button id="prevBtn" onclick="previousStep()" class="px-6 py-2 text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>
+                                <i data-lucide="chevron-left" class="w-4 h-4 mr-2 inline"></i>
+                                上一步
+                            </button>
+                            <button id="nextBtn" onclick="nextStep()" class="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                                下一步
+                                <i data-lucide="chevron-right" class="w-4 h-4 ml-2 inline"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Preview Panel -->
+            <div class="lg:col-span-1">
+                <div class="bg-white rounded-lg shadow-sm border sticky top-8">
+                    <div class="p-6">
+                        <div class="flex items-center justify-between mb-4">
+                            <h3 class="text-lg font-semibold text-gray-900">配置预览</h3>
+                            <div class="flex space-x-2">
+                                <button onclick="copyConfig()" class="p-2 text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors" title="复制配置">
+                                    <i data-lucide="copy" class="w-4 h-4"></i>
+                                </button>
+                                <button onclick="downloadConfig()" class="p-2 text-gray-600 hover:text-gray-900 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors" title="下载配置">
+                                    <i data-lucide="download" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="mb-4">
+                            <div class="flex items-center space-x-2 text-sm text-gray-600">
+                                <i data-lucide="info" class="w-4 h-4"></i>
+                                <span>配置文件将实时更新</span>
+                            </div>
+                        </div>
+
+                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                            <pre id="configPreview" class="text-sm text-gray-700 whitespace-pre-wrap overflow-x-auto"># WeRead Bot 配置文件
+# 由配置生成器自动生成
+# 生成时间: <生成时间>
+
+app:
+  name: WeReadBot
+  startup_mode: immediate
+  startup_delay: 1-10
+
+curl_config:
+  file_path: curl_command.txt
+
+reading:
+  mode: smart_random
+  target_duration: 60-70
+  reading_interval: 25-35
+  smart_random:
+    book_continuity: 0.8
+    chapter_continuity: 0.7
+    book_switch_cooldown: 300
+
+human_simulation:
+  enabled: true
+  break_probability: 0.15
+  break_duration: 30-180
+
+network:
+  timeout: 30
+  retry_times: 3
+
+notification:
+  enabled: true
+  include_statistics: true</pre>
+                        </div>
+
+                        <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                            <h4 class="text-sm font-medium text-blue-900 mb-2">配置说明</h4>
+                            <ul class="text-xs text-blue-700 space-y-1">
+                                <li>• 支持YAML格式配置文件</li>
+                                <li>• 可通过环境变量覆盖配置</li>
+                                <li>• 配置文件保存为 config.yaml</li>
+                                <li>• 建议定期备份配置文件</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-4 right-4 transform translate-x-full transition-transform duration-300 z-50">
+        <div class="bg-white border border-gray-200 rounded-lg shadow-lg p-4 flex items-center space-x-3">
+            <div id="toastIcon"></div>
+            <div>
+                <div id="toastTitle" class="font-medium text-gray-900"></div>
+                <div id="toastMessage" class="text-sm text-gray-600"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables
+        let currentStep = 1;
+        let userCount = 0;
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            lucide.createIcons();
+            updateConfigPreview();
+            initializeEventListeners();
+        });
+
+        // Initialize event listeners
+        function initializeEventListeners() {
+            // CURL type change
+            document.querySelectorAll('input[name="curlType"]').forEach(radio => {
+                radio.addEventListener('change', function() {
+                    if (this.value === 'file') {
+                        document.getElementById('curlFileGroup').classList.remove('hidden');
+                        document.getElementById('curlContentGroup').classList.add('hidden');
+                    } else {
+                        document.getElementById('curlFileGroup').classList.add('hidden');
+                        document.getElementById('curlContentGroup').classList.remove('hidden');
+                    }
+                    updateConfigPreview();
+                });
+            });
+
+            // Reading mode change
+            document.getElementById('readingMode').addEventListener('change', function() {
+                const smartRandomSettings = document.getElementById('smartRandomSettings');
+                if (this.value === 'smart_random') {
+                    smartRandomSettings.classList.remove('hidden');
+                } else {
+                    smartRandomSettings.classList.add('hidden');
+                }
+                updateConfigPreview();
+            });
+
+            // Notification channel checkboxes
+            document.querySelectorAll('.channel-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const config = document.querySelector(`[data-channel-config="${this.dataset.channel}"]`);
+                    if (this.checked) {
+                        config.classList.remove('hidden');
+                    } else {
+                        config.classList.add('hidden');
+                    }
+                    updateConfigPreview();
+                });
+            });
+
+            // Add input listeners for real-time preview
+            document.querySelectorAll('input, select, textarea').forEach(element => {
+                element.addEventListener('input', updateConfigPreview);
+                element.addEventListener('change', updateConfigPreview);
+            });
+        }
+
+        // Step navigation
+        function nextStep() {
+            if (currentStep < 4) {
+                // Validate current step before proceeding
+                const stepErrors = validateCurrentStep(currentStep);
+                if (stepErrors.length > 0) {
+                    showValidationErrors(stepErrors);
+                    return;
+                }
+
+                // Mark current step as completed
+                document.querySelector(`[data-step="${currentStep}"]`).classList.add('completed');
+
+                currentStep++;
+                showStep(currentStep);
+                updateProgress();
+            } else {
+                // Generate configuration
+                generateFinalConfig();
+            }
+        }
+
+        function validateCurrentStep(step) {
+            const errors = [];
+
+            switch (step) {
+                case 1:
+                    // Validate basic configuration
+                    const appName = document.getElementById('appName').value.trim();
+                    if (!appName) {
+                        errors.push('应用名称不能为空');
+                    }
+
+                    const startupDelay = document.getElementById('startupDelay').value.trim();
+                    if (!startupDelay || !isValidRange(startupDelay)) {
+                        errors.push('启动延迟格式不正确，应为范围值（如：1-10）或单值');
+                    }
+
+                    // Validate CURL configuration
+                    const curlType = document.querySelector('input[name="curlType"]:checked').value;
+                    if (curlType === 'file') {
+                        const curlFilePath = document.getElementById('curlFilePath').value.trim();
+                        if (!curlFilePath) {
+                            errors.push('CURL文件路径不能为空');
+                        }
+                    } else {
+                        const curlContent = document.getElementById('curlContent').value.trim();
+                        if (!curlContent) {
+                            errors.push('CURL命令内容不能为空');
+                        } else if (!curlContent.includes('curl')) {
+                            errors.push('CURL命令内容格式不正确');
+                        }
+                    }
+                    break;
+
+                case 2:
+                    // Validate reading configuration
+                    const targetDuration = document.getElementById('targetDuration').value.trim();
+                    if (!targetDuration || !isValidRange(targetDuration)) {
+                        errors.push('目标阅读时长格式不正确，应为范围值（如：60-70）');
+                    }
+
+                    const readingInterval = document.getElementById('readingInterval').value.trim();
+                    if (!readingInterval || !isValidRange(readingInterval)) {
+                        errors.push('阅读间隔格式不正确，应为范围值（如：25-35）');
+                    }
+
+                    // Validate network settings
+                    const networkTimeout = parseInt(document.getElementById('networkTimeout').value);
+                    if (isNaN(networkTimeout) || networkTimeout < 1) {
+                        errors.push('网络超时时间必须大于0');
+                    }
+
+                    const retryTimes = parseInt(document.getElementById('retryTimes').value);
+                    if (isNaN(retryTimes) || retryTimes < 0) {
+                        errors.push('重试次数不能为负数');
+                    }
+                    break;
+
+                case 3:
+                    // Validate notification configuration (optional, no strict validation)
+                    break;
+
+                case 4:
+                    // Validate multi-user configuration
+                    const multiUserEnabled = document.getElementById('multiUserEnabled').checked;
+                    if (multiUserEnabled) {
+                        const users = document.querySelectorAll('[id^="user-"]');
+                        if (users.length === 0) {
+                            errors.push('多用户模式下至少需要添加一个用户');
+                        }
+
+                        users.forEach(userElement => {
+                            const userId = userElement.id.replace('user-', '');
+                            const name = userElement.querySelector(`[data-user-input="${userId}-name"]`)?.value.trim();
+                            const file_path = userElement.querySelector(`[data-user-input="${userId}-file_path"]`)?.value.trim();
+
+                            if (!name) {
+                                errors.push(`用户${userId}的名称不能为空`);
+                            }
+                            if (!file_path) {
+                                errors.push(`用户${userId}的CURL文件路径不能为空`);
+                            }
+                        });
+                    }
+                    break;
+            }
+
+            return errors;
+        }
+
+        function previousStep() {
+            if (currentStep > 1) {
+                currentStep--;
+                showStep(currentStep);
+                updateProgress();
+            }
+        }
+
+        function showStep(step) {
+            // Hide all steps
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+
+            // Show current step
+            document.getElementById(`step-${step}`).classList.add('active');
+
+            // Update step indicators
+            document.querySelectorAll('.step-indicator').forEach(indicator => {
+                indicator.classList.remove('active');
+            });
+            document.querySelector(`[data-step="${step}"]`).classList.add('active');
+
+            // Update buttons
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+
+            prevBtn.disabled = step === 1;
+
+            if (step === 4) {
+                nextBtn.innerHTML = '生成配置 <i data-lucide="settings" class="w-4 h-4 ml-2 inline"></i>';
+            } else {
+                nextBtn.innerHTML = '下一步 <i data-lucide="chevron-right" class="w-4 h-4 ml-2 inline"></i>';
+            }
+
+            // Re-initialize icons
+            lucide.createIcons();
+
+            // Update current step display
+            document.getElementById('current-step').textContent = step;
+        }
+
+        function updateProgress() {
+            for (let i = 1; i <= 3; i++) {
+                const progressBar = document.getElementById(`progress-${i}`);
+                if (i < currentStep) {
+                    progressBar.style.width = '100%';
+                } else {
+                    progressBar.style.width = '0%';
+                }
+            }
+        }
+
+        // Range value update
+        function updateRangeValue(id, value) {
+            document.getElementById(id + 'Value').textContent = Math.round(value * 100) + '%';
+            updateConfigPreview();
+        }
+
+        // Multi-user functionality
+        function toggleMultiUser() {
+            const enabled = document.getElementById('multiUserEnabled').checked;
+            const usersList = document.getElementById('usersList');
+
+            if (enabled) {
+                usersList.classList.remove('hidden');
+                if (userCount === 0) {
+                    addUser();
+                }
+            } else {
+                usersList.classList.add('hidden');
+            }
+            updateConfigPreview();
+        }
+
+        function addUser() {
+            userCount++;
+            const container = document.getElementById('usersContainer');
+
+            const userDiv = document.createElement('div');
+            userDiv.className = 'border border-gray-200 rounded-lg p-4';
+            userDiv.id = `user-${userCount}`;
+
+            userDiv.innerHTML = `
+                <div class="flex items-center justify-between mb-3">
+                    <h4 class="font-medium text-gray-900">用户 ${userCount}</h4>
+                    <button onclick="removeUser(${userCount})" class="text-red-600 hover:text-red-700">
+                        <i data-lucide="trash-2" class="w-4 h-4"></i>
+                    </button>
+                </div>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">用户名称</label>
+                        <input type="text" placeholder="例如: 用户1" value="用户${userCount}"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                               data-user-input="${userCount}-name" onchange="updateConfigPreview()">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">CURL文件路径</label>
+                        <input type="text" placeholder="例如: user${userCount}_curl.txt"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                               data-user-input="${userCount}-file_path" onchange="updateConfigPreview()">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">目标时长（分钟）</label>
+                        <input type="text" placeholder="例如: 60-90" value="60-70"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                               data-user-input="${userCount}-target_duration" onchange="updateConfigPreview()">
+                    </div>
+                </div>
+            `;
+
+            container.appendChild(userDiv);
+            lucide.createIcons();
+            updateConfigPreview();
+        }
+
+        function removeUser(userId) {
+            const userElement = document.getElementById(`user-${userId}`);
+            if (userElement) {
+                userElement.remove();
+                updateConfigPreview();
+            }
+        }
+
+        // Configuration validation
+        function validateConfig() {
+            const errors = [];
+
+            // Validate basic configuration
+            const appName = document.getElementById('appName').value.trim();
+            if (!appName) {
+                errors.push('应用名称不能为空');
+            }
+
+            const startupDelay = document.getElementById('startupDelay').value.trim();
+            if (!startupDelay || !isValidRange(startupDelay)) {
+                errors.push('启动延迟格式不正确，应为范围值（如：1-10）或单值');
+            }
+
+            // Validate CURL configuration
+            const curlType = document.querySelector('input[name="curlType"]:checked').value;
+            if (curlType === 'file') {
+                const curlFilePath = document.getElementById('curlFilePath').value.trim();
+                if (!curlFilePath) {
+                    errors.push('CURL文件路径不能为空');
+                }
+            } else {
+                const curlContent = document.getElementById('curlContent').value.trim();
+                if (!curlContent) {
+                    errors.push('CURL命令内容不能为空');
+                } else if (!curlContent.includes('curl')) {
+                    errors.push('CURL命令内容格式不正确');
+                }
+            }
+
+            // Validate reading configuration
+            const targetDuration = document.getElementById('targetDuration').value.trim();
+            if (!targetDuration || !isValidRange(targetDuration)) {
+                errors.push('目标阅读时长格式不正确，应为范围值（如：60-70）');
+            }
+
+            const readingInterval = document.getElementById('readingInterval').value.trim();
+            if (!readingInterval || !isValidRange(readingInterval)) {
+                errors.push('阅读间隔格式不正确，应为范围值（如：25-35）');
+            }
+
+            // Validate multi-user configuration
+            const multiUserEnabled = document.getElementById('multiUserEnabled').checked;
+            if (multiUserEnabled) {
+                const users = document.querySelectorAll('[id^="user-"]');
+                if (users.length === 0) {
+                    errors.push('多用户模式下至少需要添加一个用户');
+                }
+
+                users.forEach(userElement => {
+                    const userId = userElement.id.replace('user-', '');
+                    const name = userElement.querySelector(`[data-user-input="${userId}-name"]`)?.value.trim();
+                    const file_path = userElement.querySelector(`[data-user-input="${userId}-file_path"]`)?.value.trim();
+
+                    if (!name) {
+                        errors.push(`用户${userId}的名称不能为空`);
+                    }
+                    if (!file_path) {
+                        errors.push(`用户${userId}的CURL文件路径不能为空`);
+                    }
+                });
+            }
+
+            // Validate network settings
+            const networkTimeout = parseInt(document.getElementById('networkTimeout').value);
+            if (isNaN(networkTimeout) || networkTimeout < 1) {
+                errors.push('网络超时时间必须大于0');
+            }
+
+            const retryTimes = parseInt(document.getElementById('retryTimes').value);
+            if (isNaN(retryTimes) || retryTimes < 0) {
+                errors.push('重试次数不能为负数');
+            }
+
+            return errors;
+        }
+
+        function isValidRange(value) {
+            // Check if it's a single number
+            if (!isNaN(value) && parseFloat(value) > 0) {
+                return true;
+            }
+
+            // Check if it's a range (e.g., "60-70")
+            const rangePattern = /^(\d+(\.\d+)?)\s*-\s*(\d+(\.\d+)?)$/;
+            if (rangePattern.test(value)) {
+                const matches = value.match(rangePattern);
+                const min = parseFloat(matches[1]);
+                const max = parseFloat(matches[3]);
+                return min > 0 && max >= min;
+            }
+
+            return false;
+        }
+
+        function showValidationErrors(errors) {
+            if (errors.length === 0) {
+                return true;
+            }
+
+            const errorMessage = errors.join('\n• ');
+            showToast('error', '配置验证失败', `请检查以下配置项：\n• ${errorMessage}`);
+            return false;
+        }
+
+        // Configuration generation
+        function updateConfigPreview() {
+            const config = generateConfig();
+            const preview = document.getElementById('configPreview');
+            preview.textContent = config;
+
+            // Real-time validation
+            const errors = validateConfig();
+            const previewContainer = preview.parentElement;
+
+            if (errors.length > 0) {
+                previewContainer.classList.add('border-red-300', 'bg-red-50');
+                previewContainer.classList.remove('border-gray-200', 'bg-gray-50');
+            } else {
+                previewContainer.classList.remove('border-red-300', 'bg-red-50');
+                previewContainer.classList.add('border-gray-200', 'bg-gray-50');
+            }
+        }
+
+        function generateConfig() {
+            const config = {
+                app: {
+                    name: document.getElementById('appName').value,
+                    startup_mode: document.getElementById('startupMode').value,
+                    startup_delay: document.getElementById('startupDelay').value
+                },
+                curl_config: {},
+                reading: {
+                    mode: document.getElementById('readingMode').value,
+                    target_duration: document.getElementById('targetDuration').value,
+                    reading_interval: document.getElementById('readingInterval').value
+                },
+                human_simulation: {
+                    enabled: document.getElementById('humanSimulationEnabled').checked,
+                    break_probability: parseFloat(document.getElementById('breakProbability').value),
+                    break_duration: document.getElementById('breakDuration').value
+                },
+                network: {
+                    timeout: parseInt(document.getElementById('networkTimeout').value),
+                    retry_times: parseInt(document.getElementById('retryTimes').value)
+                },
+                notification: {
+                    enabled: document.getElementById('notificationEnabled').checked,
+                    include_statistics: document.getElementById('includeStatistics').checked,
+                    channels: []
+                }
+            };
+
+            // CURL configuration
+            const curlType = document.querySelector('input[name="curlType"]:checked').value;
+            if (curlType === 'file') {
+                config.curl_config.file_path = document.getElementById('curlFilePath').value;
+            } else {
+                config.curl_config.content = document.getElementById('curlContent').value;
+            }
+
+            // Smart random settings
+            if (config.reading.mode === 'smart_random') {
+                config.reading.smart_random = {
+                    book_continuity: parseFloat(document.getElementById('bookContinuity').value),
+                    chapter_continuity: parseFloat(document.getElementById('chapterContinuity').value),
+                    book_switch_cooldown: parseInt(document.getElementById('bookSwitchCooldown').value)
+                };
+            }
+
+            // Multi-user configuration
+            const multiUserEnabled = document.getElementById('multiUserEnabled').checked;
+            if (multiUserEnabled) {
+                config.curl_config.users = [];
+
+                document.querySelectorAll('[id^="user-"]').forEach(userElement => {
+                    const userId = userElement.id.replace('user-', '');
+                    const name = userElement.querySelector(`[data-user-input="${userId}-name"]`)?.value;
+                    const file_path = userElement.querySelector(`[data-user-input="${userId}-file_path"]`)?.value;
+                    const target_duration = userElement.querySelector(`[data-user-input="${userId}-target_duration"]`)?.value;
+
+                    if (name && file_path) {
+                        const user = { name, file_path };
+                        if (target_duration) {
+                            user.reading_overrides = { target_duration };
+                        }
+                        config.curl_config.users.push(user);
+                    }
+                });
+            }
+
+            // Notification channels
+            document.querySelectorAll('.channel-checkbox:checked').forEach(checkbox => {
+                const channel = checkbox.dataset.channel;
+                const channelConfig = { name: channel, enabled: true, config: {} };
+
+                // Get channel-specific inputs
+                const inputs = document.querySelectorAll(`[data-channel-input^="${channel}-"]`);
+                inputs.forEach(input => {
+                    const key = input.dataset.channelInput.replace(`${channel}-`, '');
+                    channelConfig.config[key] = input.value;
+                });
+
+                config.notification.channels.push(channelConfig);
+            });
+
+            // Schedule configuration
+            const scheduleEnabled = document.getElementById('scheduleEnabled').checked;
+            if (scheduleEnabled) {
+                config.schedule = {
+                    enabled: true,
+                    cron_expression: document.getElementById('cronExpression').value,
+                    timezone: document.getElementById('timezone').value
+                };
+            }
+
+            // Daemon configuration
+            const daemonEnabled = document.getElementById('daemonEnabled').checked;
+            if (daemonEnabled) {
+                config.daemon = {
+                    enabled: true,
+                    session_interval: document.getElementById('sessionInterval').value,
+                    max_daily_sessions: parseInt(document.getElementById('maxDailySessions').value)
+                };
+            }
+
+            // Logging configuration
+            config.logging = {
+                level: document.getElementById('logLevel').value,
+                format: 'detailed',
+                file: 'logs/weread.log',
+                console: true
+            };
+
+            // Convert to YAML
+            try {
+                return jsyaml.dump(config, {
+                    lineWidth: -1,
+                    noRefs: true,
+                    sortKeys: false
+                });
+            } catch (error) {
+                return '# Error generating configuration\n' + error.message;
+            }
+        }
+
+        function generateFinalConfig() {
+            // Validate configuration before generating
+            const errors = validateConfig();
+            if (!showValidationErrors(errors)) {
+                return; // Stop if validation fails
+            }
+
+            const config = generateConfig();
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            const filename = `config-${timestamp.split('T')[0]}.yaml`;
+
+            const blob = new Blob([config], { type: 'text/yaml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showToast('success', '配置文件已生成', `${filename} 文件已下载到本地`);
+        }
+
+        function downloadConfig() {
+            generateFinalConfig();
+        }
+
+        function copyConfig() {
+            const config = generateConfig();
+            navigator.clipboard.writeText(config).then(() => {
+                showToast('success', '复制成功', '配置已复制到剪贴板');
+            }).catch(() => {
+                showToast('error', '复制失败', '请手动复制配置内容');
+            });
+        }
+
+        function resetConfig() {
+            if (confirm('确定要重置所有配置吗？')) {
+                location.reload();
+            }
+        }
+
+        function loadExample() {
+            // Load example configuration
+            document.getElementById('appName').value = 'WeReadBot';
+            document.getElementById('startupMode').value = 'immediate';
+            document.getElementById('startupDelay').value = '1-10';
+            document.getElementById('curlFilePath').value = 'curl_command.txt';
+            document.getElementById('readingMode').value = 'smart_random';
+            document.getElementById('targetDuration').value = '60-70';
+            document.getElementById('readingInterval').value = '25-35';
+            document.getElementById('bookContinuity').value = '0.8';
+            document.getElementById('chapterContinuity').value = '0.7';
+            document.getElementById('breakProbability').value = '0.15';
+            document.getElementById('breakDuration').value = '30-180';
+            document.getElementById('networkTimeout').value = '30';
+            document.getElementById('retryTimes').value = '3';
+
+            // Update range displays
+            updateRangeValue('bookContinuity', '0.8');
+            updateRangeValue('chapterContinuity', '0.7');
+            updateRangeValue('breakProbability', '0.15');
+
+            showToast('success', '示例已加载', '已加载默认配置示例');
+            updateConfigPreview();
+        }
+
+        // Utility functions
+        function showTooltip(element, message) {
+            const tooltip = document.createElement('div');
+            tooltip.className = 'absolute z-10 px-2 py-1 text-xs text-white bg-gray-800 rounded shadow-lg';
+            tooltip.textContent = message;
+            tooltip.style.top = element.offsetTop - 30 + 'px';
+            tooltip.style.left = element.offsetLeft + 'px';
+            element.parentNode.appendChild(tooltip);
+
+            setTimeout(() => {
+                tooltip.remove();
+            }, 2000);
+        }
+
+        function formatBytes(bytes, decimals = 2) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+        }
+
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
+
+        // Auto-save functionality
+        function autoSaveConfig() {
+            const config = generateConfig();
+            localStorage.setItem('weread-bot-config', config);
+            console.log('Configuration auto-saved');
+        }
+
+        function loadSavedConfig() {
+            const saved = localStorage.getItem('weread-bot-config');
+            if (saved) {
+                try {
+                    // Note: Loading back from YAML to form fields would require a parser
+                    // For now, we'll just show a notification
+                    console.log('Saved configuration found');
+                } catch (error) {
+                    console.error('Error loading saved configuration:', error);
+                }
+            }
+        }
+
+        // Toast notification with different types
+        function showToast(type, title, message, duration = 3000) {
+            const toast = document.getElementById('toast');
+            const toastIcon = document.getElementById('toastIcon');
+            const toastTitle = document.getElementById('toastTitle');
+            const toastMessage = document.getElementById('toastMessage');
+
+            // Remove existing icon
+            toastIcon.innerHTML = '';
+
+            // Set icon based on type
+            const iconConfig = {
+                success: { icon: 'check-circle', color: 'text-green-600' },
+                error: { icon: 'x-circle', color: 'text-red-600' },
+                warning: { icon: 'alert-triangle', color: 'text-yellow-600' },
+                info: { icon: 'info', color: 'text-blue-600' }
+            };
+
+            const config = iconConfig[type] || iconConfig.info;
+            toastIcon.innerHTML = `<i data-lucide="${config.icon}" class="w-5 h-5 ${config.color}"></i>`;
+
+            toastTitle.textContent = title;
+            toastMessage.textContent = message;
+
+            // Show toast with animation
+            toast.classList.remove('translate-x-full');
+            toast.classList.add('translate-x-0');
+
+            // Hide after duration
+            setTimeout(() => {
+                toast.classList.add('translate-x-full');
+                toast.classList.remove('translate-x-0');
+            }, duration);
+
+            lucide.createIcons();
+        }
+
+        // Progress tracking
+        function updateStepProgress() {
+            const totalSteps = 4;
+            const progress = ((currentStep - 1) / (totalSteps - 1)) * 100;
+
+            // Update progress bar if it exists
+            const progressBar = document.querySelector('.progress-bar');
+            if (progressBar) {
+                progressBar.style.width = progress + '%';
+            }
+
+            // Auto-save on step completion
+            if (currentStep > 1) {
+                debounce(autoSaveConfig, 1000)();
+            }
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            // Ctrl/Cmd + S to save
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                downloadConfig();
+            }
+
+            // Ctrl/Cmd + R to reset
+            if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+                e.preventDefault();
+                resetConfig();
+            }
+
+            // Arrow key navigation
+            if (e.key === 'ArrowRight' && currentStep < 4) {
+                nextStep();
+            } else if (e.key === 'ArrowLeft' && currentStep > 1) {
+                previousStep();
+            }
+        });
+
+        // Form field helpers
+        function addInputHelper(inputElement, helperText) {
+            const helper = document.createElement('div');
+            helper.className = 'text-xs text-gray-500 mt-1';
+            helper.textContent = helperText;
+            inputElement.parentNode.appendChild(helper);
+        }
+
+        function validateField(fieldElement, validator, errorMessage) {
+            const value = fieldElement.value.trim();
+            const isValid = validator(value);
+
+            if (isValid) {
+                fieldElement.classList.remove('border-red-300', 'bg-red-50');
+                fieldElement.classList.add('border-gray-300');
+            } else {
+                fieldElement.classList.add('border-red-300', 'bg-red-50');
+                fieldElement.classList.remove('border-gray-300');
+                showTooltip(fieldElement, errorMessage);
+            }
+
+            return isValid;
+        }
+
+        // Responsive design helpers
+        function isMobile() {
+            return window.innerWidth <= 768;
+        }
+
+        function adjustLayoutForMobile() {
+            if (isMobile()) {
+                // Adjust layout for mobile devices
+                document.body.classList.add('mobile-layout');
+
+                // Make preview panel full width on mobile
+                const previewPanel = document.querySelector('.lg\\:col-span-1');
+                if (previewPanel) {
+                    previewPanel.classList.remove('lg:col-span-1');
+                    previewPanel.classList.add('col-span-1');
+                }
+            } else {
+                document.body.classList.remove('mobile-layout');
+            }
+        }
+
+        // Initialize responsive adjustments
+        window.addEventListener('resize', debounce(adjustLayoutForMobile, 250));
+        document.addEventListener('DOMContentLoaded', adjustLayoutForMobile);
+    </script>
+</body>
+</html>
