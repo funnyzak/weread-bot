@@ -4,7 +4,7 @@
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.2.7
+    版本: 0.2.8
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -61,7 +61,7 @@ import schedule
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-VERSION = "0.2.7"
+VERSION = "0.2.8"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 
