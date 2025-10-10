@@ -1047,6 +1047,86 @@ class CurlParser:
 
         return headers, cookies, request_data
 
+    @staticmethod
+    def validate_curl_headers(headers: Dict[str, str],
+                             cookies: Dict[str, str],
+                             request_data: Dict[str, Any],
+                             user_name: str = "default") -> Tuple[bool, List[str]]:
+        """
+        验证 CURL headers 和 cookies 的合法性
+
+        Args:
+            headers: 解析出的 headers
+            cookies: 解析出的 cookies
+            request_data: 解析出的请求数据
+            user_name: 用户名称（用于日志）
+
+        Returns:
+            Tuple[bool, List[str]]: (是否有效, 错误信息列表)
+        """
+        errors = []
+        warnings = []
+
+        # 1. 验证必需的 cookies
+        required_cookies = ['wr_skey']
+        missing_cookies = [cookie for cookie in required_cookies if cookie not in cookies]
+        if missing_cookies:
+            errors.append(f"缺少必需的认证 cookies: {', '.join(missing_cookies)}")
+
+        # 2. 验证 wr_skey 的格式（应该是一个较长的字符串）
+        if 'wr_skey' in cookies:
+            skey_value = cookies['wr_skey']
+            if len(skey_value) < 8:
+                errors.append(f"wr_skey 长度异常: {len(skey_value)} 字符，可能无效")
+            else:
+                warnings.append(f"wr_skey 验证通过: {skey_value[:8]}***")
+
+        # 3. 验证 User-Agent
+        user_agent = headers.get('user-agent', headers.get('User-Agent', ''))
+        if not user_agent:
+            errors.append("缺少 User-Agent header")
+        elif 'mozilla' not in user_agent.lower():
+            warnings.append(f"User-Agent 可能异常: {user_agent[:50]}...")
+        else:
+            warnings.append(f"User-Agent 验证通过: {user_agent.split(' ')[0]}...")
+
+        # 4. 验证请求数据中的必需字段
+        required_data_fields = ['appId', 'ps', 'pc']
+        missing_fields = [field for field in required_data_fields if field not in request_data]
+        if missing_fields:
+            errors.append(f"请求数据中缺少必需字段: {', '.join(missing_fields)}")
+
+        # 5. 验证请求数据字段格式
+        for field in required_data_fields:
+            if field in request_data:
+                value = str(request_data[field])
+                if len(value) < 4:
+                    errors.append(f"字段 {field} 长度异常: {value}")
+                else:
+                    warnings.append(f"字段 {field} 验证通过: {value[:8]}***")
+
+        # 6. 验证书籍和章节字段（如果存在）
+        if 'b' in request_data and 'c' in request_data:
+            book_id = str(request_data['b'])
+            chapter_id = str(request_data['c'])
+            if len(book_id) < 10 or len(chapter_id) < 10:
+                warnings.append(f"书籍或章节ID可能异常: book={book_id[:10]}..., chapter={chapter_id[:10]}...")
+            else:
+                warnings.append(f"书籍和章节ID验证通过: book={book_id[:10]}..., chapter={chapter_id[:10]}...")
+
+        # 记录验证结果
+        # if warnings:
+        #     for warning in warnings:
+        #         logging.info(f"🔍 用户 {user_name} 验证提示: {warning}")
+
+        if errors:
+            for error in errors:
+                logging.error(f"❌ 用户 {user_name} 验证错误: {error}")
+            return False, errors
+
+        logging.info(f"✅ 用户 {user_name} CURL 配置验证通过")
+        return True, []
+
 
 class HttpClient:
     """HTTP客户端封装"""
@@ -2380,6 +2460,20 @@ class WeReadSessionManager:
                     CurlParser.parse_curl_command(curl_content)
                 )
 
+                # 验证CURL配置的合法性
+                is_valid, validation_errors = CurlParser.validate_curl_headers(
+                    self.headers, self.cookies, curl_data, self.user_name
+                )
+
+                if not is_valid:
+                    error_msg = (
+                        f"❌ 用户 {self.user_name} CURL 配置验证失败:\n"
+                        + "\n".join(f"  • {error}" for error in validation_errors)
+                        + f"\n请检查您的CURL配置是否正确，并确保包含所有必需的认证信息。"
+                    )
+                    logging.error(error_msg)
+                    raise ValueError(error_msg)
+
                 # 如果从CURL中提取到请求数据，则使用它替换默认数据
                 if curl_data:
                     # 验证必需字段
@@ -2885,6 +2979,101 @@ def parse_arguments():
     return parser.parse_args()
 
 
+async def _validate_curl_configs(config: WeReadConfig):
+    """
+    验证所有CURL配置的合法性
+
+    Args:
+        config: 微信读书配置对象
+
+    Raises:
+        ValueError: 当CURL配置验证失败时
+    """
+    # 如果配置了多用户，验证每个用户的配置
+    if config.users:
+        logging.info(f"🔍 验证多用户CURL配置，共 {len(config.users)} 个用户")
+
+        for user_config in config.users:
+            curl_content = ""
+
+            # 获取用户的CURL配置
+            if user_config.file_path and Path(user_config.file_path).exists():
+                try:
+                    with open(user_config.file_path, 'r', encoding='utf-8') as f:
+                        curl_content = f.read().strip()
+                except Exception as e:
+                    logging.error(f"❌ 用户 {user_config.name} CURL文件读取失败: {e}")
+                    raise ValueError(f"用户 {user_config.name} 的CURL配置文件无法读取: {e}")
+
+            elif user_config.content:
+                curl_content = user_config.content
+
+            if not curl_content:
+                logging.error(f"❌ 用户 {user_config.name} 未配置CURL数据，请检查配置文件")
+                raise ValueError(f"用户 {user_config.name} 未配置CURL数据，请检查配置文件")
+
+            # 解析和验证
+            try:
+                headers, cookies, curl_data = CurlParser.parse_curl_command(curl_content)
+                is_valid, validation_errors = CurlParser.validate_curl_headers(
+                    headers, cookies, curl_data, user_config.name
+                )
+
+                if not is_valid:
+                    error_msg = (
+                        f"❌ 用户 {user_config.name} CURL配置验证失败:\n"
+                        + "\n".join(f"  • {error}" for error in validation_errors)
+                    )
+                    logging.error(error_msg)
+                    raise ValueError(error_msg)
+
+            except Exception as e:
+                error_msg = f"❌ 用户 {user_config.name} CURL配置解析失败: {e}"
+                logging.error(error_msg)
+                raise ValueError(error_msg)
+    else:
+        # 单用户模式验证
+        curl_content = ""
+
+        if config.curl_file_path and Path(config.curl_file_path).exists():
+            try:
+                with open(config.curl_file_path, 'r', encoding='utf-8') as f:
+                    curl_content = f.read().strip()
+            except Exception as e:
+                logging.error(f"❌ 全局CURL文件读取失败: {e}")
+                raise ValueError(f"全局CURL配置文件无法读取: {e}")
+
+        elif config.curl_content:
+            curl_content = config.curl_content
+
+        # 如果没有CURL配置，则退出
+        if not curl_content:
+            logging.error("❌ 未配置CURL数据，请检查配置文件")
+            raise ValueError("未配置CURL数据，请检查配置文件")
+
+        # 解析和验证
+        try:
+            headers, cookies, curl_data = CurlParser.parse_curl_command(curl_content)
+            is_valid, validation_errors = CurlParser.validate_curl_headers(
+                headers, cookies, curl_data, "default"
+            )
+
+            if not is_valid:
+                error_msg = (
+                    "❌ 全局CURL配置验证失败:\n"
+                    + "\n".join(f"  • {error}" for error in validation_errors)
+                )
+                logging.error(error_msg)
+                raise ValueError(error_msg)
+
+        except Exception as e:
+            error_msg = f"❌ 全局CURL配置解析失败: {e}"
+            logging.error(error_msg)
+            raise ValueError(error_msg)
+
+    logging.info("✅ 所有CURL配置验证通过")
+
+
 async def main():
     """主函数"""
     # 解析命令行参数
@@ -2902,6 +3091,9 @@ async def main():
         if args.mode:
             config.startup_mode = args.mode
             logging.info(f"🔧 命令行参数覆盖启动模式: {args.mode}")
+
+        # 验证CURL配置（早期验证）
+        await _validate_curl_configs(config)
 
         # 打印启动信息
         logging.info("\n" + config.get_startup_info())
