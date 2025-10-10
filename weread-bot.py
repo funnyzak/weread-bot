@@ -2793,6 +2793,11 @@ class WeReadSessionManager:
             for cookie in response.headers.get('Set-Cookie', '').split(';'):
                 if "wr_skey" in cookie:
                     new_skey = cookie.split('=')[-1][:8]
+
+                    if not new_skey:
+                        logging.error(f"❌ Cookie刷新失败，新密钥为空")
+                        return False
+                    
                     self.cookies['wr_skey'] = new_skey
                     logging.info(f"✅ Cookie刷新成功，新密钥: {new_skey}")
                     return True
