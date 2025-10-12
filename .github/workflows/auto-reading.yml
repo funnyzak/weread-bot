@@ -12,7 +12,7 @@ on:
       target_duration:
         description: '阅读时长（分钟，格式：10-20。建议：频繁运行时设置5-10分钟，GitHub免费版每月2000分钟额度）'
         required: false
-        default: '5-10'
+        default: '1-2'
         type: string
       reading_mode:
         description: '阅读模式'
@@ -57,8 +57,8 @@ jobs:
 
         reading:
           mode: "${{ github.event.inputs.reading_mode || 'smart_random' }}"
-          # 目标阅读时长（分钟），支持区间随机，当前为：45-90分钟
-          target_duration: "${{ github.event.inputs.target_duration || '45-90' }}"
+          # 目标阅读时长（分钟），支持区间随机，当前为：2-5分钟
+          target_duration: "${{ github.event.inputs.target_duration || '2-5' }}"
           reading_interval: "30-48"
           use_curl_data_first: true
           fallback_to_config: true
