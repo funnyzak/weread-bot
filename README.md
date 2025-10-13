@@ -281,6 +281,7 @@ open config-generator.html
 - 配置：设置 `APPRISE_URL`，格式如：
   - Discord: `discord://webhook_id/webhook_token`
   - Email: `mailto://user:pass@domain.com`
+  - 自部署 Apprise 服务器: `apprises://your_apprise_server.com/your_apprise_token/?tags=pro`
   - 更多格式见：[Apprise文档](https://github.com/caronc/apprise)
 
 #### Bark（iOS推送）
@@ -330,6 +331,8 @@ open config-generator.html
 - 标题：可选设置 `GOTIFY_TITLE` 自定义消息标题
 - 示例：`https://gotify.example.com` + `your_app_token`
 - 官网：https://gotify.net/
+
+> 如果没有找到合适的通知服务，可以通过 Apprise 配置需要的通知服务，如 **Email** 通知设置格式 `mailto://user:pass@domain.com`。更新请参考 [Apprise文档](https://github.com/caronc/apprise)。
 
 ### 定时任务配置（scheduled模式）
 | 配置项 | 环境变量 | 默认值 | 说明 |
