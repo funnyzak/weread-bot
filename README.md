@@ -258,6 +258,7 @@ open config-generator.html
 | | `token` | `GOTIFY_TOKEN` | Gotify应用令牌 |
 | | `priority` | `GOTIFY_PRIORITY` | 消息优先级（1-10） |
 | | `title` | `GOTIFY_TITLE` | 消息标题 |
+| Server酱³ | `sc3_sendkey` | `SC3_SENDKEY` | Server酱³的SendKey |
 
 ### 通知方式详细说明
 
@@ -330,6 +331,14 @@ open config-generator.html
 - 标题：可选设置 `GOTIFY_TITLE` 自定义消息标题
 - 示例：`https://gotify.example.com` + `your_app_token`
 - 官网：https://gotify.net/
+
+#### Server酱³（ServerChan 推送服务）
+- 获取方式：
+  1. 访问 Server酱³ 官网 https://sc3.ft07.com/
+  2. 获取 SendKey（格式：sctp{uid}t开头）
+- 配置：设置 `SC3_SENDKEY`
+- 格式：`sctp6681ta-xxx`（自动识别uid）
+-
 
 ### 定时任务配置（scheduled模式）
 | 配置项 | 环境变量 | 默认值 | 说明 |
@@ -625,7 +634,7 @@ curl_config:
         reading_interval: "30-48"      # 阅读间隔
         use_curl_data_first: true      # 是否优先使用CURL数据
         fallback_to_config: true       # 是否回退到配置数据
-    
+
     - name: "用户2"
       file_path: "user2_curl.txt"
       reading_overrides:
@@ -645,7 +654,7 @@ curl_config:
 **配置覆盖优先级：**
 
 1. **用户特定配置** (`reading_overrides`) - 最高优先级
-2. **全局配置** (`reading`) - 默认配置  
+2. **全局配置** (`reading`) - 默认配置
 3. **程序默认值** - 最低优先级
 
 ### 2. 智能书籍管理
@@ -665,7 +674,7 @@ reading:
           chapter_index: 61              # 可选：微信读书官方章节索引ID
         # 旧格式：只有章节ID（向后兼容）
         - "chapter_3"                    # 兼容旧格式，章节索引将自动计算或从CURL提取
-    
+
     - name: "原则"
       book_id: "book_id_2"
       chapters:
@@ -674,7 +683,7 @@ reading:
           index: 25                      # 使用简化字段名
         # 混合使用新旧格式
         - "chapter_b"                    # 旧格式
-  
+
   # 智能随机策略
   smart_random:
     book_continuity: 0.8          # 书籍连续性
@@ -730,7 +739,7 @@ network:
 notification:
   enabled: true
   include_statistics: true       # 包含详细统计
-  
+
   # 通知通道配置（支持多个通道同时使用）
   channels:
     # 通道1：PushPlus
@@ -738,7 +747,7 @@ notification:
       enabled: true
       config:
         token: "${PUSHPLUS_TOKEN}"
-    
+
     # 通道2：Telegram
     - name: "telegram"
       enabled: true
@@ -748,13 +757,13 @@ notification:
         proxy:
           http: "${HTTP_PROXY}"
           https: "${HTTPS_PROXY}"
-    
+
     # 通道3：WxPusher
     - name: "wxpusher"
       enabled: false
       config:
         spt: "${WXPUSHER_SPT}"
-    
+
     # 通道4：Apprise
     - name: "apprise"
       enabled: false
@@ -764,7 +773,7 @@ notification:
         # 示例：mailto://user:pass@domain.com
         # 详见：https://github.com/caronc/apprise
         url: "${APPRISE_URL}"
-    
+
     # 通道5：Bark
     - name: "bark"
       enabled: false
@@ -775,7 +784,7 @@ notification:
         device_key: "${BARK_DEVICE_KEY}"
         # 通知音效（可选）
         sound: "${BARK_SOUND}"
-    
+
     # 通道6：Ntfy
     - name: "ntfy"
       enabled: false
@@ -786,7 +795,7 @@ notification:
         topic: "${NTFY_TOPIC}"
         # 访问令牌（可选，用于私有主题）
         token: "${NTFY_TOKEN}"
-    
+
     # 通道7：飞书
     - name: "feishu"
       enabled: false
@@ -795,7 +804,7 @@ notification:
         webhook_url: "${FEISHU_WEBHOOK_URL}"
         # 消息类型：text(纯文本), rich_text(富文本)
         msg_type: "text"
-    
+
     # 通道8：企业微信
     - name: "wework"
       enabled: false
@@ -804,7 +813,7 @@ notification:
         webhook_url: "${WEWORK_WEBHOOK_URL}"
         # 消息类型：text(纯文本), markdown(Markdown), news(图文)
         msg_type: "text"
-    
+
     # 通道9：钉钉
     - name: "dingtalk"
       enabled: false
@@ -813,7 +822,7 @@ notification:
         webhook_url: "${DINGTALK_WEBHOOK_URL}"
         # 消息类型：text(纯文本), markdown(Markdown), link(链接)
         msg_type: "text"
-    
+
     # 通道10：Gotify
     - name: "gotify"
       enabled: false
@@ -826,6 +835,14 @@ notification:
         priority: "${GOTIFY_PRIORITY}"
         # 消息标题（可选）
         title: "${GOTIFY_TITLE}"
+
+    # 通道11：Server酱³
+    - name: "sc3"
+      enabled: false
+      config:
+        # Server酱³的SendKey
+        # 格式：sctp{uid}t开头，例如 sctp6681ta-xxx
+        sc3_sendkey: "${SC3_SENDKEY}"
 ```
 
 ## 微信读书API字段说明
@@ -903,7 +920,7 @@ curl_config:
       file_path: "account1_curl.txt"
       reading_overrides:
         target_duration: "45-90"
-    - name: "账号2"  
+    - name: "账号2"
       file_path: "account2_curl.txt"
       reading_overrides:
         target_duration: "30-60"
