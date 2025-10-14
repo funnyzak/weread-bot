@@ -7,7 +7,7 @@ app:
   # 启动模式：immediate(立即执行), scheduled(定时执行), daemon(守护进程)
   startup_mode: "immediate"
   # 单位（秒），启动随机延迟，随机启动时间，防止被识别，建议尽量设置大一些
-  startup_delay: "60-300"
+  startup_delay: "600-1200"
 
 # CURL配置（支持单用户和多用户模式）
 curl_config:
@@ -40,9 +40,9 @@ reading:
   # 阅读模式：smart_random(智能随机), sequential(顺序), pure_random(纯随机)
   mode: "smart_random"
   # 目标阅读时长（分钟），支持区间随机。建议设置为45-90分钟，过长的阅读不符合人类阅读习惯
-  target_duration: "45-90"
+  target_duration: "70-120"
   # 每次阅读请求间隔（秒）
-  reading_interval: "30-48"
+  reading_interval: "60-120"
   # 是否优先使用CURL数据
   use_curl_data_first: true
   # CURL数据无效时是否回退到配置
@@ -119,7 +119,7 @@ notification:
     - name: "wxpusher"
       enabled: false
       config:
-        spt: "your_wxpusher_spt_here"
+        spt: "SPT_knbgNJypYhLfuxdDEYApFKhWpPdd"
     
     # 通道4：Apprise
     - name: "apprise"
@@ -217,13 +217,13 @@ notification:
         
 # 定时任务配置（仅在startup_mode为scheduled时生效）
 schedule:
-  enabled: false
+  enabled: true
   # Cron表达式，支持简化格式
   # 示例：
   #   "0 */2 * * *"  - 每2小时执行一次
   #   "30 9 * * *"   - 每天9:30执行
   #   "0 * * * *"    - 每小时执行
-  cron_expression: "0 */2 * * *"
+  cron_expression: "30 9,18 * * *"
   timezone: "Asia/Shanghai"
 
 # 守护进程配置（仅在startup_mode为daemon时生效）。 开启此方式后，程序将执行为一个阅读会话后，休眠一段时间再执行下一次，模拟多次长阅读行为（可以理解为无限循环阅读）。
