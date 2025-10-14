@@ -132,6 +132,12 @@ jobs:
         # 代理设置（可选）
         HTTP_PROXY: ${{ secrets.HTTP_PROXY }}
         HTTPS_PROXY: ${{ secrets.HTTPS_PROXY }}
+        SERVERCHAN3_UID: ${{ secrets.SERVERCHAN3_UID }}
+        SERVERCHAN3_SENDKEY: ${{ secrets.SERVERCHAN3_SENDKEY }}
+        SERVERCHAN3_TAGS: ${{ secrets.SERVERCHAN3_TAGS }}
+        SERVERCHAN3_SHORT: ${{ secrets.SERVERCHAN3_SHORT }}
+        PUSHDEER_PUSHKEY: ${{ secrets.PUSHDEER_PUSHKEY }}
+        PUSHDEER_TYPE: ${{ secrets.PUSHDEER_TYPE }}
         # 其他环境变量
         TZ: 'Asia/Shanghai'
       run: |

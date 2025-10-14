@@ -4,7 +4,7 @@
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.2.9
+    版本: 0.2.10
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -61,7 +61,7 @@ import schedule
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 
@@ -77,6 +77,8 @@ class NotificationMethod(Enum):
     WEWORK = "wework"
     DINGTALK = "dingtalk"
     GOTIFY = "gotify"
+    SERVERCHAN3 = "serverchan3"
+    PUSHDEER = "pushdeer"
 
 
 class ReadingMode(Enum):
@@ -936,10 +938,41 @@ class ConfigManager:
                 enabled=True,
                 config=gotify_config
             ))
-        
+
+        # Server酱³
+        if os.getenv("SERVERCHAN3_UID") and os.getenv("SERVERCHAN3_SENDKEY"):
+            serverchan3_config = {
+                "uid": os.getenv("SERVERCHAN3_UID"),
+                "sendkey": os.getenv("SERVERCHAN3_SENDKEY")
+            }
+            if os.getenv("SERVERCHAN3_TAGS"):
+                serverchan3_config["tags"] = os.getenv("SERVERCHAN3_TAGS")
+            if os.getenv("SERVERCHAN3_SHORT"):
+                serverchan3_config["short"] = os.getenv("SERVERCHAN3_SHORT")
+
+            channels.append(NotificationChannel(
+                name="serverchan3",
+                enabled=True,
+                config=serverchan3_config
+            ))
+
+        # PushDeer
+        if os.getenv("PUSHDEER_PUSHKEY"):
+            pushdeer_config = {
+                "pushkey": os.getenv("PUSHDEER_PUSHKEY")
+            }
+            if os.getenv("PUSHDEER_TYPE"):
+                pushdeer_config["type"] = os.getenv("PUSHDEER_TYPE")
+
+            channels.append(NotificationChannel(
+                name="pushdeer",
+                enabled=True,
+                config=pushdeer_config
+            ))
+
         if channels:
             logging.info(f"✅ 从环境变量自动创建了 {len(channels)} 个通知通道")
-        
+
         return channels
 
     def _load_user_configs(self, config_data: dict) -> List[UserConfig]:
@@ -1598,6 +1631,10 @@ class NotificationService:
                 return self._send_dingtalk(message, channel.config)
             elif channel.name == "gotify":
                 return self._send_gotify(message, channel.config)
+            elif channel.name == "serverchan3":
+                return self._send_serverchan3(message, channel.config)
+            elif channel.name == "pushdeer":
+                return self._send_pushdeer(message, channel.config)
             else:
                 logging.warning(f"⚠️ 未知的通知通道: {channel.name}")
                 return False
@@ -1940,6 +1977,49 @@ class NotificationService:
         }
 
         return self._send_http_notification(url, data, "Gotify", headers=headers)
+
+    def _send_serverchan3(self, message: str, config: Dict[str, Any]) -> bool:
+        """发送Server酱³通知"""
+        if not config.get("uid") or not config.get("sendkey"):
+            logging.error("❌ Server酱³ UID或SendKey未配置")
+            return False
+
+        # 构建Server酱³ API URL
+        uid = config["uid"]
+        sendkey = config["sendkey"]
+        url = f"https://{uid}.push.ft07.com/send/{sendkey}.send"
+
+        # 准备请求数据
+        data = {
+            "text": "WeRead Bot 通知",
+            "desp": message
+        }
+
+        # 添加可选参数
+        if config.get("tags"):
+            data["tags"] = config["tags"]
+        if config.get("short"):
+            data["short"] = config["short"]
+
+        return self._send_http_notification(url, data, "Server酱³")
+
+    def _send_pushdeer(self, message: str, config: Dict[str, Any]) -> bool:
+        """发送PushDeer通知"""
+        if not config.get("pushkey"):
+            logging.error("❌ PushDeer PushKey未配置")
+            return False
+
+        url = "https://api2.pushdeer.com/message/push"
+
+        # 准备请求数据
+        data = {
+            "pushkey": config["pushkey"],
+            "text": "WeRead Bot 通知",
+            "desp": message,
+            "type": config.get("type", "markdown")
+        }
+
+        return self._send_http_notification(url, data, "PushDeer")
 
 
 class CronParser:

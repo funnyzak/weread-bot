@@ -193,6 +193,28 @@ notification:
         # 消息标题（可选）
         title: "WeRead Bot 通知"
 
+    # 通道11：Server酱³
+    - name: "serverchan3"
+      enabled: false
+      config:
+        # Server酱³ UID
+        uid: "your_serverchan3_uid_here"
+        # Server酱³ SendKey
+        sendkey: "your_serverchan3_sendkey_here"
+        # 标签（可选，用|分隔多个标签）
+        tags: "阅读报告"
+        # 简短描述（可选）
+        short: "微信读书阅读完成"
+
+    # 通道12：PushDeer
+    - name: "pushdeer"
+      enabled: false
+      config:
+        # PushDeer PushKey
+        pushkey: "your_pushdeer_pushkey_here"
+        # 消息类型：text(纯文本), markdown(Markdown)，默认为markdown
+        type: "markdown"
+        
 # 定时任务配置（仅在startup_mode为scheduled时生效）
 schedule:
   enabled: false

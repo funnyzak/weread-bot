@@ -19,7 +19,7 @@ WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真
 - 🤖 **高级行为模拟**：模拟真实用户阅读行为，包括阅读速度变化、中途休息等
 - ⚙️ **多样化配置**：支持配置文件、环境变量、命令行参数三种设置方式，灵活适配各种部署环境
 - 📊 **详细统计报告**：提供完整的阅读数据、成功率统计和多维度分析
-- 📱 **多平台消息推送**：支持 PushPlus、Telegram、WxPusher、Apprise、Bark、Ntfy、飞书、企业微信、钉钉、Gotify 等通知服务
+- 📱 **多平台消息推送**：支持 PushPlus、Telegram、WxPusher、Apprise、Bark、Ntfy、飞书、企业微信、钉钉、Gotify、Server酱³、PushDeer 等通知服务
 - 🔧 **智能配置解析**：自动从 CURL 命令提取请求数据、headers 和 cookies，无需手动配置
 - 🎯 **精准请求模拟**：使用真实抓包数据，动态生成签名和校验，大幅提高成功率
 - 🕐 **灵活定时任务**：支持 cron 表达式定时执行，可自定义执行频率和时间
@@ -258,6 +258,12 @@ open config-generator.html
 | | `token` | `GOTIFY_TOKEN` | Gotify应用令牌 |
 | | `priority` | `GOTIFY_PRIORITY` | 消息优先级（1-10） |
 | | `title` | `GOTIFY_TITLE` | 消息标题 |
+| Server酱³ | `uid` | `SERVERCHAN3_UID` | Server酱³ UID |
+| | `sendkey` | `SERVERCHAN3_SENDKEY` | Server酱³ SendKey |
+| | `tags` | `SERVERCHAN3_TAGS` | 标签（可选，用|分隔） |
+| | `short` | `SERVERCHAN3_SHORT` | 简短描述（可选） |
+| PushDeer | `pushkey` | `PUSHDEER_PUSHKEY` | PushDeer PushKey |
+| | `type` | `PUSHDEER_TYPE` | 消息类型：text/markdown |
 
 ### 通知方式详细说明
 
@@ -331,6 +337,26 @@ open config-generator.html
 - 标题：可选设置 `GOTIFY_TITLE` 自定义消息标题
 - 示例：`https://gotify.example.com` + `your_app_token`
 - 官网：https://gotify.net/
+
+#### Server酱³（Server酱）
+- 获取方式：
+  1. 访问 [Server酱³](https://sc3.ft07.com/) 注册账号
+  2. 获取 UID 和 SendKey
+- 配置：设置 `SERVERCHAN3_UID` 和 `SERVERCHAN3_SENDKEY`
+- 标签：可选设置 `SERVERCHAN3_TAGS`，支持多个标签用|分隔
+- 简短描述：可选设置 `SERVERCHAN3_SHORT`，用于显示简要信息
+- 官网：https://sc3.ft07.com/
+- 文档：https://doc.sc3.ft07.com/
+
+#### PushDeer（开源推送服务）
+- 获取方式：
+  1. 访问 [PushDeer](https://www.pushdeer.com/) 或下载 iOS App
+  2. 注册账号并获取 PushKey
+- 配置：设置 `PUSHDEER_PUSHKEY`
+- 代理：支持HTTP/HTTPS代理（可选）
+- 消息格式：支持 纯文本和Markdown
+- 官网：https://www.pushdeer.com/
+- 文档：https://www.pushdeer.com/official.html
 
 #### 自定义通知服务
 
