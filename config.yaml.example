@@ -40,7 +40,7 @@ reading:
   # 阅读模式：smart_random(智能随机), sequential(顺序), pure_random(纯随机)
   mode: "smart_random"
   # 目标阅读时长（分钟），支持区间随机。建议设置为45-90分钟，过长的阅读不符合人类阅读习惯
-  target_duration: "70-120"
+  target_duration: "45-90"
   # 每次阅读请求间隔（秒）
   reading_interval: "60-120"
   # 是否优先使用CURL数据
