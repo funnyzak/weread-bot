@@ -332,7 +332,9 @@ open config-generator.html
 - 示例：`https://gotify.example.com` + `your_app_token`
 - 官网：https://gotify.net/
 
-> 如果没有找到合适的通知服务，可以通过 Apprise 配置需要的通知服务，如 **Email** 通知设置格式 `mailto://user:pass@domain.com`。更新请参考 [Apprise文档](https://github.com/caronc/apprise)。
+#### 自定义通知服务
+
+如果没有找到合适的通知服务，可以通过 Apprise 配置需要的通知服务，如 **Email** 通知设置格式 `mailto://user:pass@domain.com`。配置请参考 [Apprise文档](https://github.com/caronc/apprise)。
 
 ### 定时任务配置（scheduled模式）
 | 配置项 | 环境变量 | 默认值 | 说明 |
