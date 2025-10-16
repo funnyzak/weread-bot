@@ -5,7 +5,7 @@
 
 app:
   name: WeReadBot
-  startup_mode: immediate
+  startup_mode: scheduled
   startup_delay: 1-10
 curl_config:
   file_path: curl_command.txt
