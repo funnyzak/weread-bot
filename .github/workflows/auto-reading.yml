@@ -1,10 +1,11 @@
 name: Auto Reading Bot
 
 on:
-  # 定时触发 - 每天早上8点和晚上8点执行
-  # schedule:
-  #   - cron: '0 0 * * *'    # UTC 00:00 = 北京时间 08:00
-  #   - cron: '0 12 * * *'   # UTC 12:00 = 北京时间 20:00
+  # 定时触发 - 每天早上8点执行
+  # 取消注释以下行启用定时触发
+  schedule:
+    - cron: '0 0 * * *'    # UTC 00:00 = 北京时间 08:00
+
   
   # 拉取请求触发，用于测试阅读
   pull_request:
@@ -20,7 +21,7 @@ on:
       target_duration:
         description: '阅读时长（分钟，格式：10-20。建议：频繁运行时设置5-10分钟，GitHub免费版每月2000分钟额度）'
         required: false
-        default: '1-2'
+        default: '45-65'
         type: string
       reading_mode:
         description: '阅读模式'
