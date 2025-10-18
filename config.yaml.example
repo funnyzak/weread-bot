@@ -14,12 +14,12 @@ reading:
   target_duration: 50-70
   reading_interval: 25-35
   smart_random:
-    book_continuity: 0.8
+    book_continuity: 1
     chapter_continuity: 0.7
     book_switch_cooldown: 300
 human_simulation:
   enabled: true
-  break_probability: 0.15
+  break_probability: 0.5
   break_duration: 30-180
 network:
   timeout: 30
@@ -35,12 +35,9 @@ notification:
 schedule:
   enabled: true
   cron_expression: 0 9 * * *
-  timezone: Asia/Beijing
+  timezone: Asia/Shanghai
 logging:
   level: INFO
   format: detailed
   file: logs/weread.log
   console: true
-
-
-
