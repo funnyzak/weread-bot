@@ -224,6 +224,28 @@ open config-generator.html
 | 重试延迟 | `RETRY_DELAY` | `5-15` | 重试间隔（秒） |
 | 频率限制 | `RATE_LIMIT` | `10` | 请求频率（次/分钟） |
 
+### Hack配置
+
+Hack配置用于解决特殊兼容性问题，包含以下选项：
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| Cookie刷新QL属性 | `HACK_COOKIE_REFRESH_QL` | `false` | Cookie刷新时ql属性值设置 |
+
+**详细说明：**
+- `cookie_refresh_ql`: 控制Cookie刷新请求中的`ql`参数值
+  - `false` (默认): 使用`"ql": false`
+  - `true`: 使用`"ql": true`
+- 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
+- 如果遇到cookie刷新失败的问题，可以尝试切换此配置的值
+
+**使用场景：**
+```yaml
+# config.yaml 示例
+hack:
+  cookie_refresh_ql: false  # 或 true，根据您的环境测试确定
+```
+
 ### 通知配置
 
 | 配置项 | 环境变量 | 默认值 | 说明 |

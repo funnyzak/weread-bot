@@ -214,7 +214,14 @@ notification:
         pushkey: "your_pushdeer_pushkey_here"
         # 消息类型：text(纯文本), markdown(Markdown)，默认为markdown
         type: "markdown"
-        
+
+# Hack配置（用于解决特殊兼容性问题）
+hack:
+  # Cookie刷新时ql属性设置
+  # 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
+  # 默认值：false，如果遇到cookie刷新失败的问题，可以尝试设置为true
+  cookie_refresh_ql: false
+
 # 定时任务配置（仅在startup_mode为scheduled时生效）
 schedule:
   enabled: false

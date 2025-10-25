@@ -158,6 +158,41 @@
                                               class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"></textarea>
                                 </div>
 
+                                <!-- Hack Configuration -->
+                                <div class="border-t pt-6 mt-6">
+                                    <div class="mb-4">
+                                        <h3 class="text-lg font-medium text-gray-900 flex items-center">
+                                            <i data-lucide="settings" class="w-5 h-5 mr-2 text-orange-500"></i>
+                                            高级配置
+                                        </h3>
+                                        <p class="text-sm text-gray-600 mt-1">解决特殊兼容性问题的配置选项</p>
+                                    </div>
+
+                                    <div class="space-y-4">
+                                        <div>
+                                            <label class="block text-sm font-medium text-gray-700 mb-2">
+                                                Cookie刷新QL属性
+                                                <span class="ml-1 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-800">
+                                                    高级
+                                                </span>
+                                            </label>
+                                            <div class="space-y-2">
+                                                <label class="flex items-center">
+                                                    <input type="radio" name="cookieRefreshQl" value="false" checked class="mr-2">
+                                                    <span>False (默认)</span>
+                                                </label>
+                                                <label class="flex items-center">
+                                                    <input type="radio" name="cookieRefreshQl" value="true" class="mr-2">
+                                                    <span>True (解决cookie刷新问题时使用)</span>
+                                                </label>
+                                            </div>
+                                            <p class="text-xs text-gray-500 mt-1">
+                                                根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 </div>
                         </div>
 
@@ -1621,6 +1656,11 @@ notification:
                     max_daily_sessions: parseInt(document.getElementById('maxDailySessions').value)
                 };
             }
+
+            // Hack configuration
+            config.hack = {
+                cookie_refresh_ql: document.querySelector('input[name="cookieRefreshQl"]:checked').value === 'true'
+            };
 
             // Logging configuration
             config.logging = {

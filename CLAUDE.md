@@ -56,6 +56,19 @@ HttpClient              # HTTP 客户端
 NotificationService     # 通知服务
 HumanBehaviorSimulator   # 人类行为模拟器
 
+# 配置数据类
+NetworkConfig          # 网络配置
+ReadingConfig          # 阅读配置
+HumanSimulationConfig  # 人类行为模拟配置
+NotificationConfig     # 通知配置
+HackConfig            # Hack配置（兼容性解决方案）
+SmartRandomConfig      # 智能随机配置
+ScheduleConfig        # 定时任务配置
+DaemonConfig          # 守护进程配置
+LoggingConfig         # 日志配置
+UserConfig            # 用户配置
+NotificationChannel   # 通知通道配置
+
 # 工具类
 CurlParser             # CURL 命令解析器
 RandomHelper           # 随机数助手
@@ -358,6 +371,60 @@ async def _run_custom_mode(self):
 # 3. 在主方法中添加分支
 elif startup_mode == StartupMode.CUSTOM:
     await self._run_custom_mode()
+```
+
+### 添加新的 Hack 配置项
+
+当遇到特殊的兼容性问题时，可以通过添加新的 Hack 配置项来解决：
+
+1. 在 `HackConfig` 数据类中添加新字段
+2. 在 `ConfigManager._load_config()` 方法中添加加载逻辑
+3. 在相应的业务逻辑中使用配置值
+4. 更新配置文件模板和文档
+
+```python
+# 1. 添加配置项
+@dataclass
+class HackConfig:
+    cookie_refresh_ql: bool = False
+    # 新配置项
+    new_hack_option: str = "default_value"
+
+# 2. 添加加载逻辑
+config.hack = HackConfig(
+    cookie_refresh_ql=self._get_bool_config(
+        config_data, "hack.cookie_refresh_ql",
+        "HACK_COOKIE_REFRESH_QL", False
+    ),
+    new_hack_option=self._get_config_value(
+        config_data, "hack.new_hack_option",
+        "HACK_NEW_HACK_OPTION", "default_value"
+    ),
+)
+
+# 3. 在业务逻辑中使用
+def some_business_method(self):
+    if self.config.hack.new_hack_option == "special_value":
+        # 执行特殊逻辑
+        pass
+```
+
+**Hack 配置项说明：**
+
+#### `cookie_refresh_ql` 配置项
+- **用途**: 解决不同用户环境下 Cookie 刷新时 `ql` 属性值的兼容性问题
+- **类型**: `bool`
+- **默认值**: `False`
+- **使用位置**: `WeReadSessionManager._refresh_cookie()` 方法
+- **环境变量**: `HACK_COOKIE_REFRESH_QL`
+
+**实现原理：**
+```python
+# WeReadSessionManager 构造函数中动态创建
+self.cookie_data = {"rq": "%2Fweb%2Fbook%2Fread", "ql": config.hack.cookie_refresh_ql}
+
+# _refresh_cookie 方法中使用
+data=json.dumps(self.cookie_data, separators=(',', ':'))
 ```
 
 ## 性能优化
