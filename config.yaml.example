@@ -1,0 +1,256 @@
+# 微信读书阅读机器人配置文件
+# https://github.com/funnyzak/weread-bot
+# 配置优先级：环境变量 > config.yaml > 默认值
+# 你可以访问： https://weread.gh.yycc.dev/config-generator.html ，通过图形界面生成配置文件
+
+app:
+  # 启动模式：immediate(立即执行), scheduled(定时执行), daemon(守护进程)
+  startup_mode: "immediate"
+  # 单位（秒），启动随机延迟，随机启动时间，防止被识别，建议尽量设置大一些
+  startup_delay: "60-300"
+  # 多用户模式下最大并发执行的用户数量，默认1表示顺序执行
+  max_concurrent_users: 1
+
+# CURL配置（支持单用户和多用户模式）
+curl_config:
+  # 单用户模式，从文件读取CURL bash命令。注意：多用户模式下此配置无效；如果同时配置了单用户和多用户，则优先使用多用户配置。
+  file_path: "curl_command.txt"
+
+  # 多用户模式（优先级高于单用户配置）
+  users:
+    - name: "user1"
+      file_path: "user1_curl.txt"
+      # 可选：用户特定的阅读参数覆盖
+      reading_overrides:
+        target_duration: "45-90"
+        mode: "smart_random"
+        reading_interval: "30-48"
+    
+    - name: "user2"
+      file_path: "user2_curl.txt"
+      reading_overrides:
+        target_duration: "30-60"
+        mode: "sequential"
+        reading_interval: "25-35"
+    
+    - name: "user3"
+      file_path: "user3_curl.txt"
+      # 不设置overrides则使用全局配置
+
+# 阅读配置（全局默认配置，可被用户特定配置覆盖）
+reading:
+  # 阅读模式：smart_random(智能随机), sequential(顺序), pure_random(纯随机)
+  mode: "smart_random"
+  # 目标阅读时长（分钟），支持区间随机。建议设置为45-90分钟，过长的阅读不符合人类阅读习惯
+  target_duration: "45-90"
+  # 每次阅读请求间隔（秒）
+  reading_interval: "30-48"
+  # 是否优先使用CURL数据
+  use_curl_data_first: true
+  # CURL数据无效时是否回退到配置
+  fallback_to_config: true
+  
+  # 书籍配置列表
+  # 章节索引优先级：配置的索引值 > CURL提取的值 > 自动计算的索引
+  books:
+    - name: "明朝那些事"                    # 书籍名称
+      book_id: "a57325c05c8ed3a57224187"  # 书籍ID
+      chapters:                          # 章节配置，支持新旧两种格式
+        # 包含章节ID和可选的章节索引（推荐）
+        - chapter_id: "a87322c014a87ff679a21ea"
+          chapter_index: 4              # 可选：微信读书官方章节索引ID
+        - id: "e4d32d5015e4da3b7fbb1fa"
+          index: 5              # 可选：微信读书官方章节索引ID
+        # 只有章节ID
+        - "16732dc0161679091c5aeb1"      # 兼容旧格式，章节索引将自动计算或从CURL提取
+  
+  # 智能随机模式配置
+  smart_random:
+    # 书籍连续性概率（0-1，越高越倾向于继续当前书籍）
+    book_continuity: 0.8
+    # 章节连续性概率（0-1，越高越倾向于顺序阅读章节）
+    chapter_continuity: 0.7
+    # 换书冷却时间（秒），人类阅读中换书频率较低
+    book_switch_cooldown: 3600
+
+# 人类行为模拟，如果希望快速完成阅读可关闭模拟
+human_simulation:
+  enabled: true
+  # 阅读速度是否变化
+  reading_speed_variation: true
+  # 中途休息概率（0-1）
+  break_probability: 0.1
+  # 休息时长（秒）
+  break_duration: "5-20"
+  # User-Agent轮换（会话级别，非请求级别），建议不轮换，默认使用 curl 自带的 User-Agent
+  rotate_user_agent: false
+
+# 网络配置
+network:
+  timeout: 30
+  retry_times: 3
+  retry_delay: "5-15"  # 重试延迟（秒），将在异步退避中使用
+  # 请求频率控制（请求/分钟），会被速率限制器严格执行
+  rate_limit: 10
+
+# 通知配置
+notification:
+  enabled: true
+  # 是否包含详细统计
+  include_statistics: true
+  
+  # 通知通道配置（支持多个通道同时使用）
+  channels:
+    # 通道1：PushPlus
+    - name: "pushplus"
+      enabled: true
+      config:
+        token: "your_pushplus_token_here"
+    
+    # 通道2：Telegram
+    - name: "telegram"
+      enabled: true
+      config:
+        bot_token: "your_telegram_bot_token_here"
+        chat_id: "your_telegram_chat_id_here"
+        proxy:
+          http: "http://proxy_host:port"
+          https: "https://proxy_host:port"
+    
+    # 通道3：WxPusher
+    - name: "wxpusher"
+      enabled: false
+      config:
+        spt: "your_wxpusher_spt_here"
+    
+    # 通道4：Apprise
+    - name: "apprise"
+      enabled: false
+      config:
+        # Apprise通知URL，支持多种服务（如Discord、Slack、Email等）
+        # 示例：discord://webhook_id/webhook_token
+        # 示例：mailto://user:pass@domain.com
+        # 详见：https://github.com/caronc/apprise
+        url: "your_apprise_url_here"
+    
+    # 通道5：Bark
+    - name: "bark"
+      enabled: true
+      config:
+        # Bark服务器地址
+        server: "https://api.day.app"
+        # 设备Key
+        device_key: "your_bark_device_key_here"
+        # 通知音效（可选）
+        sound: "default"
+    
+    # 通道6：Ntfy
+    - name: "ntfy"
+      enabled: false
+      config:
+        # Ntfy服务器地址（默认：https://ntfy.sh）
+        server: "https://ntfy.sh"
+        # 主题名称
+        topic: "your_ntfy_topic_here"
+        # 访问令牌（可选，用于私有主题）
+        token: "your_ntfy_token_here"
+    
+    # 通道7：飞书
+    - name: "feishu"
+      enabled: false
+      config:
+        # 飞书机器人Webhook URL
+        webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your_webhook_token"
+        # 消息类型：text(纯文本), rich_text(富文本)
+        msg_type: "text"
+    
+    # 通道8：企业微信
+    - name: "wework"
+      enabled: false
+      config:
+        # 企业微信机器人Webhook URL
+        webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your_webhook_key"
+        # 消息类型：text(纯文本), markdown(Markdown), news(图文)
+        msg_type: "text"
+    
+    # 通道9：钉钉
+    - name: "dingtalk"
+      enabled: false
+      config:
+        # 钉钉机器人Webhook URL
+        webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=your_access_token"
+        # 消息类型：text(纯文本), markdown(Markdown), link(链接)
+        msg_type: "text"
+    
+    # 通道10：Gotify
+    - name: "gotify"
+      enabled: false
+      config:
+        # Gotify服务器地址
+        server: "https://gotify.example.com"
+        # 应用令牌
+        token: "your_gotify_token_here"
+        # 消息优先级（1-10，数字越大优先级越高）
+        priority: 5
+        # 消息标题（可选）
+        title: "WeRead Bot 通知"
+
+    # 通道11：Server酱³
+    - name: "serverchan3"
+      enabled: false
+      config:
+        # Server酱³ UID
+        uid: "your_serverchan3_uid_here"
+        # Server酱³ SendKey
+        sendkey: "your_serverchan3_sendkey_here"
+        # 标签（可选，用|分隔多个标签）
+        tags: "阅读报告"
+        # 简短描述（可选）
+        short: "微信读书阅读完成"
+
+    # 通道12：PushDeer
+    - name: "pushdeer"
+      enabled: false
+      config:
+        # PushDeer PushKey
+        pushkey: "your_pushdeer_pushkey_here"
+        # 消息类型：text(纯文本), markdown(Markdown)，默认为markdown
+        type: "markdown"
+
+# Hack配置（用于解决特殊兼容性问题）
+hack:
+  # Cookie刷新时ql属性设置
+  # 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
+  # 默认值：false，如果遇到cookie刷新失败的问题，可以尝试设置为true
+  cookie_refresh_ql: false
+
+# 定时任务配置（仅在startup_mode为scheduled时生效）
+schedule:
+  enabled: false
+  # Cron表达式，支持简化格式
+  # 示例：
+  #   "0 */2 * * *"     - 每2小时执行一次
+  #   "30 9 * * *"      - 每天9:30执行
+  #   "0 * * * *"       - 每小时执行
+  #   "30 9,18 * * *"   - 每天9:30和18:30执行（多时间点）
+  #   "0 8,12,18 * * *" - 每天8:00、12:00、18:00执行
+  cron_expression: "0 */2 * * *"
+  timezone: "Asia/Shanghai"
+
+# 守护进程配置（仅在startup_mode为daemon时生效）。 开启此方式后，程序将执行为一个阅读会话后，休眠一段时间再执行下一次，模拟多次长阅读行为（可以理解为无限循环阅读）。
+daemon:
+  enabled: false
+  # 会话间隔时间（分钟）
+  session_interval: "120-180"
+  # 每日最大会话数
+  max_daily_sessions: 12
+
+# 日志配置
+logging:
+  level: "INFO"
+  format: "detailed"  # simple, detailed, json
+  file: "logs/weread.log"
+  max_size: "10MB"
+  backup_count: 5
+  # 是否在控制台显示
+  console: true
