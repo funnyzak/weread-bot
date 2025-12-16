@@ -4,7 +4,7 @@
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.3.5
+    版本: 0.3.6
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -61,7 +61,7 @@ import httpx
 from croniter import croniter
 from zoneinfo import ZoneInfo
 
-VERSION = "0.3.5"
+VERSION = "0.3.6"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 
@@ -79,6 +79,20 @@ class NotificationMethod(Enum):
     GOTIFY = "gotify"
     SERVERCHAN3 = "serverchan3"
     PUSHDEER = "pushdeer"
+
+
+class NotificationEvent(str, Enum):
+    """通知触发事件类型"""
+    SESSION_SUCCESS = "session_success"
+    SESSION_FAILURE = "session_failure"
+    MULTI_USER_SUMMARY = "multi_user_summary"
+    RUNTIME_ERROR = "runtime_error"
+    GENERAL = "general"
+
+
+def default_notification_triggers() -> Dict[NotificationEvent, bool]:
+    """通知触发默认配置"""
+    return {event: True for event in NotificationEvent}
 
 
 class ReadingMode(Enum):
@@ -200,6 +214,10 @@ class NotificationConfig:
     enabled: bool = True
     include_statistics: bool = True
     channels: List[NotificationChannel] = field(default_factory=list)
+    triggers: Dict[NotificationEvent, bool] = field(
+        default_factory=default_notification_triggers
+    )
+    only_on_failure: Optional[bool] = None
 
 
 @dataclass
@@ -517,6 +535,15 @@ class ConfigManager:
         )
 
         # 加载通知配置
+        notification_triggers = self._load_notification_triggers(config_data)
+        only_on_failure = self._get_bool_or_none(
+            config_data, "notification.only_on_failure",
+            "NOTIFICATION_ONLY_ON_FAILURE"
+        )
+
+        if only_on_failure is True:
+            notification_triggers[NotificationEvent.SESSION_SUCCESS] = False
+
         config.notification = NotificationConfig(
             enabled=self._get_bool_config(
                 config_data, "notification.enabled",
@@ -527,6 +554,8 @@ class ConfigManager:
                 "INCLUDE_STATISTICS", True
             ),
             channels=self._load_notification_channels(config_data),
+            triggers=notification_triggers,
+            only_on_failure=only_on_failure,
         )
 
         # 加载hack配置
@@ -648,6 +677,45 @@ class ConfigManager:
             return []
 
         return books
+
+    def _load_notification_triggers(self, config_data: dict) -> Dict[
+        NotificationEvent, bool
+    ]:
+        """加载通知触发配置"""
+        raw_triggers = self._get_nested_dict_value(
+            config_data, "notification.triggers"
+        )
+        triggers = default_notification_triggers()
+
+        if isinstance(raw_triggers, dict):
+            for key, value in raw_triggers.items():
+                try:
+                    event = NotificationEvent(key)
+                except ValueError:
+                    logging.warning(f"⚠️ 未知通知事件: {key}")
+                    continue
+
+                triggers[event] = bool(value)
+
+        return triggers
+
+    def _get_bool_or_none(self, config_data: dict, yaml_path: str,
+                           env_key: str) -> Optional[bool]:
+        """获取布尔配置，可返回None"""
+        env_value = os.getenv(env_key)
+        yaml_value = self._get_nested_dict_value(config_data, yaml_path)
+
+        value = env_value if env_value is not None else yaml_value
+        if value is None:
+            return None
+
+        if isinstance(value, bool):
+            return value
+
+        if isinstance(value, str):
+            return value.lower() in ('true', '1', 'yes', 'on')
+
+        return None
 
     def _get_config_value(self, config_data: dict, yaml_path: str,
                           env_key: str, default: Any) -> Any:
@@ -1665,9 +1733,18 @@ class NotificationService:
     def __init__(self, config: NotificationConfig):
         self.config = config
 
-    def send_notification(self, message: str) -> bool:
+    def send_notification(
+        self, message: str,
+        event: NotificationEvent = NotificationEvent.GENERAL
+    ) -> bool:
         """发送通知"""
         if not self.config.enabled:
+            return True
+
+        if not self._is_event_enabled(event):
+            logging.info(
+                f"🔕 通知事件 {event.value} 未启用，跳过发送"
+            )
             return True
 
         success_count = 0
@@ -1688,12 +1765,22 @@ class NotificationService:
                 except Exception as e:
                     logging.error(f"❌ 通道 {channel.name} 通知发送异常: {e}")
 
-        logging.info(f"📊 通知发送完成: {success_count}/{total_channels} 个通道成功")
+        logging.info(
+            f"📊 通知发送完成: {success_count}/{total_channels} 个通道成功"
+        )
         return success_count > 0
 
-    async def send_notification_async(self, message: str) -> bool:
+    async def send_notification_async(
+        self, message: str,
+        event: NotificationEvent = NotificationEvent.GENERAL
+    ) -> bool:
         """在线程池中异步发送通知，避免阻塞事件循环"""
-        return await asyncio.to_thread(self.send_notification, message)
+        return await asyncio.to_thread(self.send_notification, message, event)
+
+    def _is_event_enabled(self, event: NotificationEvent) -> bool:
+        """判断事件是否允许通知"""
+        triggers = self.config.triggers or default_notification_triggers()
+        return triggers.get(event, True)
 
     def _send_notification_to_channel(
         self, message: str, channel: NotificationChannel
@@ -2332,7 +2419,8 @@ class WeReadApplication:
                     instance.config.notification
                 )
                 await notification_service.send_notification_async(
-                    error_msg
+                    error_msg,
+                    event=NotificationEvent.SESSION_FAILURE
                 )
             except Exception:
                 pass
@@ -2387,7 +2475,8 @@ class WeReadApplication:
                             instance.config.notification
                         )
                         await notification_service.send_notification_async(
-                            error_msg
+                            error_msg,
+                            event=NotificationEvent.SESSION_FAILURE
                         )
                     except Exception:
                         pass
@@ -2470,7 +2559,10 @@ class WeReadApplication:
                 notification_service = NotificationService(
                     instance.config.notification
                 )
-                await notification_service.send_notification_async(summary)
+                await notification_service.send_notification_async(
+                    summary,
+                    event=NotificationEvent.MULTI_USER_SUMMARY
+                )
             except Exception as e:
                 logging.error(f"❌ 多用户总结通知发送失败: {e}")
 
@@ -2844,7 +2936,8 @@ class WeReadSessionManager:
             if (self.config.notification.enabled and
                     self.config.notification.include_statistics):
                 await self.notification_service.send_notification_async(
-                    self.session_stats.get_statistics_summary()
+                    self.session_stats.get_statistics_summary(),
+                    event=NotificationEvent.SESSION_SUCCESS
                 )
 
             return self.session_stats
@@ -3296,7 +3389,10 @@ async def main():
             notification_service = NotificationService(
                 config_manager.config.notification
             )
-            await notification_service.send_notification_async(error_msg)
+            await notification_service.send_notification_async(
+                error_msg,
+                event=NotificationEvent.RUNTIME_ERROR
+            )
         except Exception:
             pass
 

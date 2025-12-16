@@ -264,8 +264,24 @@ hack:
 |--------|----------|--------|------|
 | 通知开关 | `NOTIFICATION_ENABLED` | `true` | 是否启用通知 |
 | 包含统计 | `INCLUDE_STATISTICS` | `true` | 是否包含详细统计 |
+| 仅失败通知 | `NOTIFICATION_ONLY_ON_FAILURE` | `false` | 启用后仅在失败或异常时推送 |
 
 **注意：通知配置采用多通道模式，支持同时启用多个通知服务**
+
+**触发策略示例：**
+
+```yaml
+notification:
+  triggers:
+    session_success: true
+    session_failure: true
+    multi_user_summary: true
+    runtime_error: true
+    general: true
+  only_on_failure: false
+```
+
+将 `only_on_failure` 设为 `true` 即等价于关闭 `session_success`，从而实现“仅失败通知”。如需更细粒度的控制，可单独调整 `triggers` 中的对应事件。
 
 | 通知服务 | 配置参数 | 环境变量 | 说明 |
 |---------|---------|----------|------|

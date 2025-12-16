@@ -98,6 +98,15 @@ notification:
   enabled: true
   # 是否包含详细统计
   include_statistics: true
+  # 通知触发策略（可按需关闭特定事件）
+  triggers:
+    session_success: true        # 会话成功摘要
+    session_failure: true        # 会话失败/异常
+    multi_user_summary: true     # 多用户总结
+    runtime_error: true          # 程序级错误
+    general: true                # 其它通用通知
+  # 语法糖：仅失败时通知（等价于将 session_success 设为 false）
+  only_on_failure: false
   
   # 通知通道配置（支持多个通道同时使用）
   channels:

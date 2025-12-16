@@ -406,6 +406,17 @@
                                     </label>
                                 </div>
 
+                                <!-- Only on failure -->
+                                <div>
+                                    <label class="flex items-start space-x-2">
+                                        <input type="checkbox" id="notifyOnlyOnFailure" class="mt-1">
+                                        <div>
+                                            <span class="text-sm font-medium text-gray-700">仅失败时发送通知</span>
+                                            <p class="text-xs text-gray-500 mt-1">启用后将自动关闭成功摘要，仅在会话失败或程序异常时推送</p>
+                                        </div>
+                                    </label>
+                                </div>
+
                                 <!-- Notification Channels -->
                                 <div id="notificationChannels">
                                     <h3 class="text-lg font-medium text-gray-900 mb-4">通知通道</h3>
@@ -945,7 +956,14 @@ network:
 
 notification:
   enabled: true
-  include_statistics: true</pre>
+  include_statistics: true
+  only_on_failure: false
+  triggers:
+    session_success: true
+    session_failure: true
+    multi_user_summary: true
+    runtime_error: true
+    general: true</pre>
                         </div>
 
                         <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -1517,6 +1535,7 @@ notification:
         }
 
         function generateConfig() {
+            const notifyOnlyOnFailure = document.getElementById('notifyOnlyOnFailure').checked;
             const config = {
                 app: {
                     name: document.getElementById('appName').value,
@@ -1548,6 +1567,14 @@ notification:
                 notification: {
                     enabled: document.getElementById('notificationEnabled').checked,
                     include_statistics: document.getElementById('includeStatistics').checked,
+                    only_on_failure: notifyOnlyOnFailure,
+                    triggers: {
+                        session_success: !notifyOnlyOnFailure,
+                        session_failure: true,
+                        multi_user_summary: true,
+                        runtime_error: true,
+                        general: true
+                    },
                     channels: []
                 }
             };
@@ -1767,6 +1794,7 @@ notification:
             document.getElementById('rateLimit').value = '10';
             document.getElementById('notificationEnabled').checked = true;
             document.getElementById('includeStatistics').checked = true;
+            document.getElementById('notifyOnlyOnFailure').checked = false;
             document.getElementById('logLevel').value = 'INFO';
             document.getElementById('logFormat').value = 'detailed';
             document.getElementById('logFile').value = 'logs/weread.log';

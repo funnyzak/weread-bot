@@ -36,6 +36,11 @@ on:
         required: false
         default: true
         type: boolean
+      notify_only_on_failure:
+        description: '仅失败时发送通知'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   auto-reading:
@@ -89,8 +94,15 @@ jobs:
           rate_limit: 10
 
         notification:
-          enabled: ${{ github.event.inputs.notify_enabled || true }}
+          enabled: ${{ github.event.inputs.notify_enabled != 'false' }}
           include_statistics: true
+          only_on_failure: ${{ github.event.inputs.notify_only_on_failure == 'true' }}
+          triggers:
+            session_success: ${{ github.event.inputs.notify_only_on_failure != 'true' }}
+            session_failure: true
+            multi_user_summary: true
+            runtime_error: true
+            general: true
 
         logging:
           level: "INFO"
@@ -143,6 +155,7 @@ jobs:
         SERVERCHAN3_SHORT: ${{ secrets.SERVERCHAN3_SHORT }}
         PUSHDEER_PUSHKEY: ${{ secrets.PUSHDEER_PUSHKEY }}
         PUSHDEER_TYPE: ${{ secrets.PUSHDEER_TYPE }}
+        NOTIFICATION_ONLY_ON_FAILURE: ${{ secrets.NOTIFICATION_ONLY_ON_FAILURE || github.event.inputs.notify_only_on_failure == 'true' || 'false' }}
         # 其他环境变量
         TZ: 'Asia/Shanghai'
       run: |
@@ -151,7 +164,8 @@ jobs:
         echo "运行参数:"
         echo "- 阅读时长: ${{ github.event.inputs.target_duration || '45-90' }}"
         echo "- 阅读模式: ${{ github.event.inputs.reading_mode || 'smart_random' }}"
-        echo "- 启用通知: ${{ github.event.inputs.notify_enabled || true }}"
+        echo "- 启用通知: ${{ github.event.inputs.notify_enabled != 'false' }}"
+        echo "- 仅失败通知: ${{ github.event.inputs.notify_only_on_failure == 'true' }}"
         echo "================================"
         
         # 运行阅读机器人
