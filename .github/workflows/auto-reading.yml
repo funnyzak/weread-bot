@@ -66,7 +66,7 @@ jobs:
         reading:
           mode: "${{ github.event.inputs.reading_mode || 'smart_random' }}"
           # 目标阅读时长（分钟），支持区间随机，格式如："1" 或 "1-2"，当前为：1分钟
-          target_duration: "${{ github.event.inputs.target_duration || '1' }}"
+          target_duration: "${{ github.event.inputs.target_duration || '60-90' }}"
           reading_interval: "30-48"
           use_curl_data_first: true
           fallback_to_config: true
@@ -149,7 +149,7 @@ jobs:
         echo "开始自动阅读任务..."
         echo "当前时间: $(date)"
         echo "运行参数:"
-        echo "- 阅读时长: ${{ github.event.inputs.target_duration || '45-90' }}"
+        echo "- 阅读时长: ${{ github.event.inputs.target_duration || '60-90' }}"
         echo "- 阅读模式: ${{ github.event.inputs.reading_mode || 'smart_random' }}"
         echo "- 启用通知: ${{ github.event.inputs.notify_enabled || true }}"
         echo "================================"
