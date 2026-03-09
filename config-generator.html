@@ -881,6 +881,42 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                <!-- History Configuration -->
+                                <div id="historyConfig">
+                                    <h3 class="text-lg font-medium text-gray-900 mb-4">执行历史配置</h3>
+                                    <p class="text-sm text-gray-600 mb-4">保存最近真实执行结果，便于回看和排障；不会写入 Cookie、请求头或原始 CURL</p>
+
+                                    <div class="space-y-4">
+                                        <div>
+                                            <label class="flex items-center">
+                                                <input type="checkbox" id="historyEnabled" checked class="mr-2">
+                                                <span class="text-sm font-medium text-gray-700">启用执行历史持久化</span>
+                                            </label>
+                                        </div>
+
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">历史文件路径</label>
+                                                <input type="text" id="historyFile" value="logs/run-history.json" placeholder="例如: logs/run-history.json"
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                            </div>
+
+                                            <div>
+                                                <label class="block text-sm font-medium text-gray-700 mb-2">保留记录条数</label>
+                                                <input type="number" id="historyMaxEntries" value="50" min="1"
+                                                       class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500">
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label class="flex items-center">
+                                                <input type="checkbox" id="historyPersistRuntimeError" checked class="mr-2">
+                                                <span class="text-sm font-medium text-gray-700">运行时异常也写入失败历史</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -963,7 +999,13 @@ notification:
     session_failure: true
     multi_user_summary: true
     runtime_error: true
-    general: true</pre>
+    general: true
+
+history:
+  enabled: true
+  file: logs/run-history.json
+  max_entries: 50
+  persist_runtime_error: true</pre>
                         </div>
 
                         <div class="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -973,6 +1015,7 @@ notification:
                                 <li>• 可通过环境变量覆盖配置</li>
                                 <li>• 配置文件保存为 config.yaml</li>
                                 <li>• 建议定期备份配置文件</li>
+                                <li>• 执行历史默认写入 logs/run-history.json</li>
                             </ul>
                         </div>
                     </div>
@@ -1714,6 +1757,13 @@ notification:
                 console: document.getElementById('logConsole').checked
             };
 
+            config.history = {
+                enabled: document.getElementById('historyEnabled').checked,
+                file: document.getElementById('historyFile').value,
+                max_entries: parseInt(document.getElementById('historyMaxEntries').value) || 50,
+                persist_runtime_error: document.getElementById('historyPersistRuntimeError').checked
+            };
+
             // Convert to YAML
             try {
                 return jsyaml.dump(config, {
@@ -1801,6 +1851,10 @@ notification:
             document.getElementById('logMaxSize').value = '10MB';
             document.getElementById('logBackupCount').value = '5';
             document.getElementById('logConsole').checked = true;
+            document.getElementById('historyEnabled').checked = true;
+            document.getElementById('historyFile').value = 'logs/run-history.json';
+            document.getElementById('historyMaxEntries').value = '50';
+            document.getElementById('historyPersistRuntimeError').checked = true;
 
             // Add example book
             if (bookCount === 0) {

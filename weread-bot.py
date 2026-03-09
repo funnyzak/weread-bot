@@ -49,9 +49,10 @@ import asyncio
 import urllib.parse
 import signal
 import argparse
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple, Set
+from typing import Optional, Dict, Any, List, Tuple, Set, Union
 from dataclasses import dataclass, field
 from enum import Enum
 from logging.handlers import RotatingFileHandler
@@ -239,6 +240,15 @@ class LoggingConfig:
 
 
 @dataclass
+class HistoryConfig:
+    """执行历史配置"""
+    enabled: bool = True
+    file: str = "logs/run-history.json"
+    max_entries: int = 50
+    persist_runtime_error: bool = True
+
+
+@dataclass
 class ReadingConfig:
     """阅读配置"""
     mode: str = "smart_random"
@@ -327,6 +337,7 @@ class WeReadConfig:
     schedule: ScheduleConfig = field(default_factory=ScheduleConfig)
     daemon: DaemonConfig = field(default_factory=DaemonConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    history: HistoryConfig = field(default_factory=HistoryConfig)
 
     def get_startup_info(self) -> str:
         """获取启动信息摘要"""
@@ -689,6 +700,26 @@ class ConfigManager:
             )),
             console=self._get_bool_config(
                 config_data, "logging.console", "LOG_CONSOLE", True
+            ),
+        )
+
+        config.history = HistoryConfig(
+            enabled=self._get_bool_config(
+                config_data, "history.enabled", "HISTORY_ENABLED", True
+            ),
+            file=self._get_config_value(
+                config_data, "history.file", "HISTORY_FILE",
+                "logs/run-history.json"
+            ),
+            max_entries=max(1, int(self._get_config_value(
+                config_data, "history.max_entries", "HISTORY_MAX_ENTRIES",
+                "50"
+            ))),
+            persist_runtime_error=self._get_bool_config(
+                config_data,
+                "history.persist_runtime_error",
+                "HISTORY_PERSIST_RUNTIME_ERROR",
+                True,
             ),
         )
 
@@ -3618,6 +3649,203 @@ class WeReadSessionManager:
 
 
 # ======================
+# 执行历史持久化
+# ======================
+
+
+def load_run_history(history_file: Union[str, Path]) -> List[dict]:
+    """加载执行历史，缺失或损坏时回退为空列表"""
+    history_path = Path(history_file)
+    if not history_path.exists():
+        return []
+
+    try:
+        with open(history_path, "r", encoding="utf-8") as history_fp:
+            history = json.load(history_fp)
+    except json.JSONDecodeError as exc:
+        logging.warning(f"⚠️ 执行历史文件已损坏，已回退为空历史: {exc}")
+        return []
+    except Exception as exc:
+        logging.warning(f"⚠️ 执行历史文件读取失败，已回退为空历史: {exc}")
+        return []
+
+    if not isinstance(history, list):
+        logging.warning("⚠️ 执行历史文件格式无效，已回退为空历史")
+        return []
+
+    return [entry for entry in history if isinstance(entry, dict)]
+
+
+def build_run_history_record(
+    config: WeReadConfig,
+    execution_type: str,
+    run_summary: Optional[Dict[str, Any]] = None,
+    runtime_error: Exception = None,
+    error_category: Optional[RuntimeErrorCategory] = None,
+) -> Dict[str, Any]:
+    """基于运行摘要构建标准化执行历史记录"""
+    run_summary = run_summary or {}
+    failure_categories = dict(run_summary.get("failure_categories") or {})
+    effective_user_count = run_summary.get("user_count")
+    if effective_user_count is None:
+        effective_user_count = len(config.users) if config.users else 1
+
+    record = {
+        "recorded_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "execution_type": execution_type,
+        "startup_mode": config.startup_mode,
+        "final_status": run_summary.get(
+            "final_status",
+            "failed" if runtime_error else "unknown",
+        ),
+        "user_count": effective_user_count,
+        "successful_users": run_summary.get("successful_users", 0),
+        "failed_users": run_summary.get("failed_users", 0),
+        "skipped_users": run_summary.get("skipped_users", 0),
+        "total_duration_seconds": run_summary.get("total_duration_seconds", 0),
+        "total_reads": run_summary.get("total_reads", 0),
+        "total_failed_reads": run_summary.get("total_failed_reads", 0),
+        "failure_categories": failure_categories,
+        "continue_on_failure": run_summary.get("continue_on_failure", False),
+    }
+
+    if runtime_error is not None:
+        normalized_category = (
+            error_category.value if isinstance(error_category, Enum)
+            else (
+                str(error_category) if error_category
+                else classify_runtime_error(runtime_error).value
+            )
+        )
+        record["error_category"] = normalized_category
+        record["error_message"] = str(runtime_error)[:200]
+        if not record["failure_categories"]:
+            record["failure_categories"] = {normalized_category: 1}
+
+    return record
+
+
+def append_run_history_record(
+    history_file: Union[str, Path],
+    record: Dict[str, Any],
+    max_entries: int = 50,
+):
+    """追加执行历史并裁剪，使用临时文件替换降低损坏概率"""
+    history_path = Path(history_file)
+    temp_path = None
+
+    try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history = load_run_history(history_path)
+        history.append(record)
+        if max_entries > 0:
+            history = history[-max_entries:]
+
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=history_path.parent,
+            prefix=f".{history_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_fp:
+            temp_path = Path(temp_fp.name)
+            json.dump(history, temp_fp, ensure_ascii=False, indent=2)
+            temp_fp.write("\n")
+
+        os.replace(temp_path, history_path)
+    except Exception as exc:
+        logging.warning(f"⚠️ 执行历史写入失败，已跳过持久化: {exc}")
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
+
+def persist_run_history(
+    config: Optional[WeReadConfig],
+    execution_type: str,
+    run_summary: Optional[Dict[str, Any]] = None,
+    runtime_error: Exception = None,
+    error_category: Optional[RuntimeErrorCategory] = None,
+):
+    """统一处理真实执行历史的写入策略"""
+    if config is None or execution_type != "normal":
+        return
+
+    if not config.history.enabled:
+        return
+
+    if runtime_error is not None and not config.history.persist_runtime_error:
+        return
+
+    if run_summary is None and runtime_error is None:
+        return
+
+    record = build_run_history_record(
+        config=config,
+        execution_type=execution_type,
+        run_summary=run_summary,
+        runtime_error=runtime_error,
+        error_category=error_category,
+    )
+    append_run_history_record(
+        config.history.file,
+        record,
+        max_entries=config.history.max_entries,
+    )
+
+
+def format_last_run_summary(last_record: Optional[Dict[str, Any]]) -> str:
+    """将最近一次执行历史格式化为 CLI 可读摘要"""
+    if not last_record:
+        return "最近执行记录\n  暂无真实执行历史"
+
+    status_label_map = {
+        "success": "成功",
+        "failed": "失败",
+        "partial_success": "部分成功",
+        "skipped": "已跳过",
+    }
+    failure_categories = last_record.get("failure_categories") or {}
+    failure_text = (
+        ", ".join(
+            f"{category}={count}"
+            for category, count in failure_categories.items()
+        )
+        if failure_categories else "无"
+    )
+
+    return "\n".join([
+        "最近执行记录",
+        f"  记录时间: {last_record.get('recorded_at', '未知')}",
+        f"  执行类型: {last_record.get('execution_type', 'unknown')}",
+        f"  启动模式: {last_record.get('startup_mode', 'unknown')}",
+        (
+            "  最终状态: "
+            + status_label_map.get(
+                last_record.get("final_status", "unknown"),
+                last_record.get("final_status", "unknown"),
+            )
+        ),
+        f"  用户数量: {last_record.get('user_count', 0)}",
+        f"  成功用户: {last_record.get('successful_users', 0)}",
+        f"  失败用户: {last_record.get('failed_users', 0)}",
+        f"  跳过用户: {last_record.get('skipped_users', 0)}",
+        f"  总阅读时长: {last_record.get('total_duration_seconds', 0)} 秒",
+        f"  成功请求: {last_record.get('total_reads', 0)}",
+        f"  失败请求: {last_record.get('total_failed_reads', 0)}",
+        f"  失败分类: {failure_text}",
+        (
+            "  失败后继续: 是"
+            if last_record.get("continue_on_failure", False)
+            else "  失败后继续: 否"
+        ),
+    ])
+
+
+# ======================
 # CLI 与程序入口
 # ======================
 
@@ -4061,6 +4289,12 @@ def parse_arguments():
         help="输出启动摘要与诊断信息，不发起网络阅读请求"
     )
 
+    parser.add_argument(
+        "--show-last-run",
+        action="store_true",
+        help="显示最近一次真实执行结果并退出"
+    )
+
     return parser.parse_args()
 
 
@@ -4172,10 +4406,14 @@ async def main():
     # 解析命令行参数
     args = parse_arguments()
     execution_mode = "normal"
+    config = None
+    run_started = False
     if args.dry_run:
         execution_mode = "dry-run"
     elif args.validate_config:
         execution_mode = "validate-config"
+    elif args.show_last_run:
+        execution_mode = "show-last-run"
 
     required_deps = []
     if Path(args.config).exists() and yaml is None:
@@ -4199,6 +4437,14 @@ async def main():
         # 加载配置
         config_manager = ConfigManager(args.config)
         config = config_manager.config
+
+        if args.show_last_run:
+            last_record = None
+            history = load_run_history(config.history.file)
+            if history:
+                last_record = history[-1]
+            print(format_last_run_summary(last_record))
+            return
 
         # 使用配置设置日志
         setup_logging(config.logging, verbose=args.verbose)
@@ -4231,14 +4477,18 @@ async def main():
             return
 
         # 创建并运行应用程序
+        run_started = True
         app = WeReadApplication(config)
         await app.run()
+        run_summary = WeReadApplication.get_run_summary()
+        if run_summary:
+            persist_run_history(config, execution_mode, run_summary=run_summary)
         logging.info(
             "\n" + build_runtime_summary(
                 config,
                 execution_mode,
                 curl_validated,
-                run_summary=WeReadApplication.get_run_summary(),
+                run_summary=run_summary,
             )
         )
 
@@ -4247,6 +4497,14 @@ async def main():
     except Exception as e:
         error_msg = format_error_message("❌ 程序运行错误", e)
         logging.error(error_msg)
+
+        if run_started:
+            persist_run_history(
+                config,
+                execution_mode,
+                runtime_error=e,
+                error_category=classify_runtime_error(e),
+            )
 
         # 尝试发送错误通知
         try:

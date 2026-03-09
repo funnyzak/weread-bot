@@ -12,6 +12,7 @@ on:
     paths:
       - 'weread-bot.py'
       - 'requirements.txt'
+      - '.github/workflows/auto-reading.yml'
       - '.github/workflows/ci.yml'
 
   # 手动触发
@@ -41,6 +42,16 @@ on:
         required: false
         default: false
         type: boolean
+      history_enabled:
+        description: '启用执行历史持久化'
+        required: false
+        default: true
+        type: boolean
+      history_max_entries:
+        description: '执行历史最多保留多少条'
+        required: false
+        default: '50'
+        type: string
 
 jobs:
   auto-reading:
@@ -111,6 +122,12 @@ jobs:
           max_size: "10MB"
           backup_count: 5
           console: true
+
+        history:
+          enabled: ${{ github.event.inputs.history_enabled != 'false' }}
+          file: "logs/run-history.json"
+          max_entries: ${{ github.event.inputs.history_max_entries || '50' }}
+          persist_runtime_error: true
         EOF
 
     - name: Create logs directory
@@ -156,6 +173,10 @@ jobs:
         PUSHDEER_PUSHKEY: ${{ secrets.PUSHDEER_PUSHKEY }}
         PUSHDEER_TYPE: ${{ secrets.PUSHDEER_TYPE }}
         NOTIFICATION_ONLY_ON_FAILURE: ${{ secrets.NOTIFICATION_ONLY_ON_FAILURE || github.event.inputs.notify_only_on_failure == 'true' || 'false' }}
+        HISTORY_ENABLED: ${{ secrets.HISTORY_ENABLED || github.event.inputs.history_enabled == 'true' || 'true' }}
+        HISTORY_FILE: ${{ secrets.HISTORY_FILE || 'logs/run-history.json' }}
+        HISTORY_MAX_ENTRIES: ${{ secrets.HISTORY_MAX_ENTRIES || github.event.inputs.history_max_entries || '50' }}
+        HISTORY_PERSIST_RUNTIME_ERROR: ${{ secrets.HISTORY_PERSIST_RUNTIME_ERROR || 'true' }}
         # 其他环境变量
         TZ: 'Asia/Shanghai'
       run: |
@@ -166,7 +187,20 @@ jobs:
         echo "- 阅读模式: ${{ github.event.inputs.reading_mode || 'smart_random' }}"
         echo "- 启用通知: ${{ github.event.inputs.notify_enabled != 'false' }}"
         echo "- 仅失败通知: ${{ github.event.inputs.notify_only_on_failure == 'true' }}"
+        echo "- 历史持久化: ${{ github.event.inputs.history_enabled != 'false' }}"
+        echo "- 历史保留条数: ${{ github.event.inputs.history_max_entries || '50' }}"
         echo "================================"
         
         # 运行阅读机器人
         python weread-bot.py --config config.yaml
+
+    - name: Upload runtime artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: weread-runtime-${{ github.run_id }}
+        path: |
+          logs/weread.log
+          logs/run-history.json
+        if-no-files-found: warn
+        retention-days: 7

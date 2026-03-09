@@ -109,6 +109,7 @@ python weread-bot.py --config multiuser-config.yaml
 ```
 
 > **详细配置指南**: [GitHub Actions 自动阅读配置指南](https://github.com/funnyzak/weread-bot/blob/main/docs/github-action-autoread-guide.md)
+> 工作流默认会把 `logs/weread.log` 和 `logs/run-history.json` 作为 artifact 上传，便于回看最近执行记录。
 
 ### 方式五：不同运行模式
 
@@ -130,12 +131,18 @@ python weread-bot.py --validate-config --config config.yaml
 
 # 输出运行诊断信息，不发起阅读请求
 python weread-bot.py --dry-run --config config.yaml
+
+# 查看最近一次真实执行结果
+python weread-bot.py --show-last-run --config config.yaml
 ```
 
 说明：
 
 - `--validate-config` 会输出用户数量、用户级 `CURL` 来源、时间策略覆盖情况和全局/用户配置差异摘要。
 - `--dry-run` 会在 `--validate-config` 的基础上继续输出通知触发配置、通道就绪状态、缺失字段和禁用通道摘要，但不会真正发起阅读请求。
+- `--show-last-run` 只读取 `history.file` 指向的本地历史文件，输出最近一次真实执行摘要后退出，不会初始化阅读会话。
+- 真实执行结束后，如 `history.enabled=true`，程序会把最近执行摘要写入默认文件 `logs/run-history.json`。
+- 历史记录只保存时间、状态、用户数、阅读统计和失败分类等摘要，不会保存 Cookie、请求头或原始 CURL。
 - 如果 `curl_config.users[].reading_overrides` 中存在不支持的键，程序会直接提示对应配置路径。
 
 ### 方式六：Docker 方式运行
@@ -272,6 +279,33 @@ Hack配置用于解决特殊兼容性问题，包含以下选项：
 hack:
   cookie_refresh_ql: false  # 或 true，根据您的环境测试确定
 ```
+
+### 执行历史配置
+
+程序默认会把最近真实执行结果写入本地 JSON 文件，便于排查最近一次任务状态和失败类型。
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| 历史开关 | `HISTORY_ENABLED` | `true` | 是否启用执行历史持久化 |
+| 历史文件 | `HISTORY_FILE` | `logs/run-history.json` | 历史记录输出路径 |
+| 保留条数 | `HISTORY_MAX_ENTRIES` | `50` | 仅保留最近 N 条真实执行记录 |
+| 异常落盘 | `HISTORY_PERSIST_RUNTIME_ERROR` | `true` | 真实执行运行时异常时是否追加失败记录 |
+
+示例：
+
+```yaml
+history:
+  enabled: true
+  file: "logs/run-history.json"
+  max_entries: 50
+  persist_runtime_error: true
+```
+
+说明：
+
+- `--validate-config` 与 `--dry-run` 不会写入历史，避免污染真实执行结果。
+- 历史文件内容损坏时，程序会记录警告并回退为空历史，不会阻断主流程。
+- 历史记录不会保存敏感请求数据，例如 Cookie、请求头和原始 CURL。
 
 ### 使用建议
 
@@ -499,6 +533,16 @@ daemon:
 - 支持每日会话次数限制
 - 自动处理跨天重置
 - 支持优雅关闭（Ctrl+C）
+
+### 4. 最近执行结果查询
+
+```bash
+python weread-bot.py --show-last-run --config config.yaml
+```
+
+- 仅读取 `history.file` 指向的历史文件
+- 没有历史记录时会输出明确提示
+- 适合快速确认最近一次真实执行的状态、用户统计和失败分类
 
 ## 阅读模式详解
 

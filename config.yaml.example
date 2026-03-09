@@ -263,3 +263,14 @@ logging:
   backup_count: 5
   # 是否在控制台显示
   console: true
+
+# 执行历史配置
+history:
+  # 是否启用最近执行记录持久化
+  enabled: true
+  # 历史文件路径
+  file: "logs/run-history.json"
+  # 最多保留最近多少条执行记录
+  max_entries: 50
+  # 真实执行过程中发生运行时异常时，是否落一条失败历史
+  persist_runtime_error: true
