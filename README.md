@@ -124,7 +124,19 @@ python weread-bot.py --mode daemon
 
 # 详细日志输出
 python weread-bot.py --verbose
+
+# 仅校验配置与CURL
+python weread-bot.py --validate-config --config config.yaml
+
+# 输出运行诊断信息，不发起阅读请求
+python weread-bot.py --dry-run --config config.yaml
 ```
+
+说明：
+
+- `--validate-config` 会输出用户数量、用户级 `CURL` 来源、时间策略覆盖情况和全局/用户配置差异摘要。
+- `--dry-run` 会在 `--validate-config` 的基础上继续输出通知触发配置、通道就绪状态、缺失字段和禁用通道摘要，但不会真正发起阅读请求。
+- 如果 `curl_config.users[].reading_overrides` 中存在不支持的键，程序会直接提示对应配置路径。
 
 ### 方式六：Docker 方式运行
 
@@ -188,6 +200,16 @@ open config-generator.html
 | 用户名称 | `curl_config.users[].name` | 用户标识名称 |
 | CURL文件 | `curl_config.users[].file_path` | 用户专属的CURL文件路径 |
 | 个性化配置 | `curl_config.users[].reading_overrides` | 用户特定的阅读参数覆盖 |
+
+`curl_config.users[].reading_overrides` 当前支持的键：
+
+- `mode`
+- `target_duration`
+- `reading_interval`
+- `use_curl_data_first`
+- `fallback_to_config`
+
+如果填写了其他键，`--validate-config` 和 `--dry-run` 会直接报出具体配置路径。
 
 
 ### 应用配置
@@ -724,7 +746,7 @@ curl_config:
 - **可控并发**：通过 `MAX_CONCURRENT_USERS` 控制同时在线的账号数量，默认1表示顺序执行
 - **独立配置**：每个用户可以有不同的阅读策略和时长
 - **错误隔离**：单个用户失败不影响其他用户执行
-- **统计汇总**：提供单用户和多用户的详细统计报告
+- **统计汇总**：提供单用户和多用户的详细统计报告，包含成功、失败、跳过和失败分类汇总
 
 **配置覆盖优先级：**
 
@@ -1062,7 +1084,6 @@ reading:
 ## 项目文档
 
 - [GitHub Actions 自动阅读配置指南](docs/github-action-autoread-guide.md)
-- [项目定位与演进路线图](docs/project-positioning-roadmap.md)
 
 ## 安全建议
 
