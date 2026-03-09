@@ -99,8 +99,8 @@ jobs:
           only_on_failure: ${{ github.event.inputs.notify_only_on_failure == 'true' }}
           triggers:
             session_success: ${{ github.event.inputs.notify_only_on_failure != 'true' }}
+            multi_user_summary: ${{ github.event.inputs.notify_only_on_failure != 'true' }}
             session_failure: true
-            multi_user_summary: true
             runtime_error: true
             general: true
 

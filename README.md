@@ -281,7 +281,7 @@ notification:
   only_on_failure: false
 ```
 
-将 `only_on_failure` 设为 `true` 即等价于关闭 `session_success`，从而实现“仅失败通知”。如需更细粒度的控制，可单独调整 `triggers` 中的对应事件。
+将 `only_on_failure` 设为 `true` 即等价于关闭 `session_success` 和 `multi_user_summary`，从而在单用户、多用户场景下都实现“仅失败通知”。如需更细粒度的控制，可单独调整 `triggers` 中的对应事件。
 
 | 通知服务 | 配置参数 | 环境变量 | 说明 |
 |---------|---------|----------|------|
@@ -1058,6 +1058,11 @@ reading:
   target_duration: "60-90"   # 较短时长更安全
   reading_interval: "30-45"  # 增加请求间隔
 ```
+
+## 项目文档
+
+- [GitHub Actions 自动阅读配置指南](docs/github-action-autoread-guide.md)
+- [项目定位与演进路线图](docs/project-positioning-roadmap.md)
 
 ## 安全建议
 

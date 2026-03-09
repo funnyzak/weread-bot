@@ -543,6 +543,7 @@ class ConfigManager:
 
         if only_on_failure is True:
             notification_triggers[NotificationEvent.SESSION_SUCCESS] = False
+            notification_triggers[NotificationEvent.MULTI_USER_SUMMARY] = False
 
         config.notification = NotificationConfig(
             enabled=self._get_bool_config(

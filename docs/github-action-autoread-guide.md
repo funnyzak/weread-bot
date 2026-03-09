@@ -208,7 +208,7 @@ on:
 | `notify_enabled` | `true` | 是否启用通知 |
 | `notify_only_on_failure` | `false` | 仅失败时发送通知 |
 
-当在 GitHub Actions 中手动触发 `auto-reading.yml` 时，可以直接在界面勾选以上两个通知开关：`notify_enabled` 控制是否生成阅读成功摘要，`notify_only_on_failure` 则对应 `config.yaml` 中的 `notification.only_on_failure`，会自动关闭成功类事件的触发，仅保留失败/异常通知。
+当在 GitHub Actions 中手动触发 `auto-reading.yml` 时，可以直接在界面勾选以上两个通知开关：`notify_enabled` 控制是否生成阅读成功摘要，`notify_only_on_failure` 则对应 `config.yaml` 中的 `notification.only_on_failure`，会自动关闭 `session_success` 和 `multi_user_summary` 两类成功事件，仅保留失败/异常通知。
 
 如果希望默认采用“仅失败通知”策略（无需每次触发都勾选），可以设置仓库 Secret `NOTIFICATION_ONLY_ON_FAILURE=true`。该 Secret 会通过环境变量覆盖运行参数，在 workflow 中自动传递给 `NOTIFICATION_ONLY_ON_FAILURE`，同时仍可通过手动触发的输入临时改变行为。
 

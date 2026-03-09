@@ -412,7 +412,7 @@
                                         <input type="checkbox" id="notifyOnlyOnFailure" class="mt-1">
                                         <div>
                                             <span class="text-sm font-medium text-gray-700">仅失败时发送通知</span>
-                                            <p class="text-xs text-gray-500 mt-1">启用后将自动关闭成功摘要，仅在会话失败或程序异常时推送</p>
+                                            <p class="text-xs text-gray-500 mt-1">启用后将自动关闭单用户成功摘要和多用户总结，仅在失败或程序异常时推送</p>
                                         </div>
                                     </label>
                                 </div>
@@ -1570,8 +1570,8 @@ notification:
                     only_on_failure: notifyOnlyOnFailure,
                     triggers: {
                         session_success: !notifyOnlyOnFailure,
+                        multi_user_summary: !notifyOnlyOnFailure,
                         session_failure: true,
-                        multi_user_summary: true,
                         runtime_error: true,
                         general: true
                     },
