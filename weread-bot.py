@@ -5,7 +5,7 @@ from __future__ import annotations
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.3.6
+    版本: 0.3.7
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -78,7 +78,7 @@ except ImportError:
     croniter = None
 from zoneinfo import ZoneInfo
 
-VERSION = "0.3.6"
+VERSION = "0.3.7"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 
@@ -276,6 +276,7 @@ class UserConfig:
     name: str
     file_path: str = ""
     content: str = ""
+    cookie_refresh_ql: Optional[bool] = None
     reading_overrides: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -1187,6 +1188,9 @@ class ConfigManager:
                         name=user_data.get("name"),
                         file_path=user_data.get("file_path", ""),
                         content=user_data.get("content", ""),
+                        cookie_refresh_ql=user_data.get(
+                            "cookie_refresh_ql"
+                        ),
                         reading_overrides=user_data.get(
                             "reading_overrides", {}
                         )
@@ -3054,8 +3058,11 @@ class WeReadSessionManager:
         )
         self.session_stats = ReadingSession(user_name=self.user_name)
 
-        # 动态创建cookie数据，使用配置中的ql值
-        self.cookie_data = {"rq": "%2Fweb%2Fbook%2Fread", "ql": config.hack.cookie_refresh_ql}
+        # 动态创建 cookie 数据，优先使用用户级 ql 配置
+        self.cookie_data = {
+            "rq": "%2Fweb%2Fbook%2Fread",
+            "ql": self._resolve_cookie_refresh_ql(),
+        }
 
         self.headers = {}
         self.cookies = {}
@@ -3064,6 +3071,13 @@ class WeReadSessionManager:
 
         self._load_curl_config()
         self._initialize_session_user_agent()
+
+    def _resolve_cookie_refresh_ql(self) -> bool:
+        """解析当前用户会话的 Cookie 刷新 ql 配置"""
+        if (self.user_config
+                and isinstance(self.user_config.cookie_refresh_ql, bool)):
+            return self.user_config.cookie_refresh_ql
+        return self.config.hack.cookie_refresh_ql
 
     def _apply_reading_overrides(
         self, base_config: ReadingConfig, user_config: UserConfig
@@ -3994,6 +4008,16 @@ def _build_user_config_summary_lines(config: WeReadConfig) -> List[str]:
             if key in user_config.reading_overrides
             and key in USER_TIME_STRATEGY_FIELDS
         ]
+        if user_config.cookie_refresh_ql is None:
+            cookie_refresh_ql_desc = (
+                "沿用全局 hack.cookie_refresh_ql "
+                f"({_format_config_value(config.hack.cookie_refresh_ql)})"
+            )
+        else:
+            cookie_refresh_ql_desc = (
+                "用户级覆盖 "
+                f"({_format_config_value(user_config.cookie_refresh_ql)})"
+            )
         summary_lines.extend([
             f"  - 用户: {user_config.name}",
             (
@@ -4010,6 +4034,7 @@ def _build_user_config_summary_lines(config: WeReadConfig) -> List[str]:
                 "    独立时间策略: 否（沿用全局 reading.target_duration / "
                 "reading.reading_interval）"
             ),
+            f"    Cookie刷新QL: {cookie_refresh_ql_desc}",
             f"    覆盖差异: {_build_user_override_diff(user_config, config.reading)}",
         ])
 
@@ -4127,6 +4152,12 @@ def _validate_runtime_config(config: WeReadConfig):
                         f"{user_path}.reading_overrides.{invalid_key} 不支持，"
                         f"允许项: {allowed_override_keys}"
                     )
+
+            if (user_config.cookie_refresh_ql is not None
+                    and not isinstance(user_config.cookie_refresh_ql, bool)):
+                validation_errors.append(
+                    f"{user_path}.cookie_refresh_ql 必须是布尔值"
+                )
 
             if not user_config.file_path and not user_config.content:
                 validation_errors.append(

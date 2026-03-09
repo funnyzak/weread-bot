@@ -134,6 +134,9 @@ python weread-bot.py --dry-run --config config.yaml
 
 # 查看最近一次真实执行结果
 python weread-bot.py --show-last-run --config config.yaml
+
+# 查看所有可用命令
+python weread-bot.py --help
 ```
 
 说明：
@@ -144,6 +147,7 @@ python weread-bot.py --show-last-run --config config.yaml
 - 真实执行结束后，如 `history.enabled=true`，程序会把最近执行摘要写入默认文件 `logs/run-history.json`。
 - 历史记录只保存时间、状态、用户数、阅读统计和失败分类等摘要，不会保存 Cookie、请求头或原始 CURL。
 - 如果 `curl_config.users[].reading_overrides` 中存在不支持的键，程序会直接提示对应配置路径。
+- 如果 `curl_config.users[].cookie_refresh_ql` 不是布尔值，程序会直接提示对应配置路径。
 
 ### 方式六：Docker 方式运行
 
@@ -206,6 +210,7 @@ open config-generator.html
 | 多用户模式 | `curl_config.users` | 配置多个用户的CURL文件和个性化参数 |
 | 用户名称 | `curl_config.users[].name` | 用户标识名称 |
 | CURL文件 | `curl_config.users[].file_path` | 用户专属的CURL文件路径 |
+| Cookie刷新QL覆盖 | `curl_config.users[].cookie_refresh_ql` | 用户级 Cookie 刷新 `ql` 开关，未设置时沿用全局值 |
 | 个性化配置 | `curl_config.users[].reading_overrides` | 用户特定的阅读参数覆盖 |
 
 `curl_config.users[].reading_overrides` 当前支持的键：
@@ -217,6 +222,12 @@ open config-generator.html
 - `fallback_to_config`
 
 如果填写了其他键，`--validate-config` 和 `--dry-run` 会直接报出具体配置路径。
+
+`curl_config.users[].cookie_refresh_ql` 仅支持布尔值：
+
+- `true`: 当前用户刷新 Cookie 时使用 `"ql": true`
+- `false`: 当前用户刷新 Cookie 时使用 `"ql": false`
+- 不填写: 沿用全局 `hack.cookie_refresh_ql`
 
 
 ### 应用配置
@@ -267,9 +278,11 @@ Hack配置用于解决特殊兼容性问题，包含以下选项：
 | Cookie刷新QL属性 | `HACK_COOKIE_REFRESH_QL` | `false` | Cookie刷新时ql属性值设置 |
 
 **详细说明：**
-- `cookie_refresh_ql`: 控制Cookie刷新请求中的`ql`参数值
+- `cookie_refresh_ql`: 控制Cookie刷新请求中的`ql`参数值，作为全局默认值
   - `false` (默认): 使用`"ql": false`
   - `true`: 使用`"ql": true`
+- 多用户模式下，可通过 `curl_config.users[].cookie_refresh_ql` 为单个用户覆盖该值
+- 环境变量 `HACK_COOKIE_REFRESH_QL` 只能设置全局默认值，不能为不同用户分别设置
 - 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
 - 如果遇到cookie刷新失败的问题，可以尝试切换此配置的值
 
@@ -277,7 +290,13 @@ Hack配置用于解决特殊兼容性问题，包含以下选项：
 ```yaml
 # config.yaml 示例
 hack:
-  cookie_refresh_ql: false  # 或 true，根据您的环境测试确定
+  cookie_refresh_ql: false  # 全局默认值
+
+curl_config:
+  users:
+    - name: "user1"
+      file_path: "user1_curl.txt"
+      cookie_refresh_ql: true  # 仅覆盖该用户
 ```
 
 ### 执行历史配置
@@ -770,6 +789,7 @@ curl_config:
   users:
     - name: "用户1"                    # 用户标识名称
       file_path: "user1_curl.txt"      # 用户专属的CURL文件路径
+      cookie_refresh_ql: true          # 可选：覆盖全局 hack.cookie_refresh_ql
       reading_overrides:               # 用户特定的阅读参数覆盖（可选）
         target_duration: "45-90"       # 阅读时长
         mode: "smart_random"           # 阅读模式
@@ -788,14 +808,14 @@ curl_config:
 **多用户执行特性：**
 
 - **可控并发**：通过 `MAX_CONCURRENT_USERS` 控制同时在线的账号数量，默认1表示顺序执行
-- **独立配置**：每个用户可以有不同的阅读策略和时长
+- **独立配置**：每个用户可以有不同的阅读策略、时长和 Cookie 刷新 `ql` 开关
 - **错误隔离**：单个用户失败不影响其他用户执行
 - **统计汇总**：提供单用户和多用户的详细统计报告，包含成功、失败、跳过和失败分类汇总
 
 **配置覆盖优先级：**
 
-1. **用户特定配置** (`reading_overrides`) - 最高优先级
-2. **全局配置** (`reading`) - 默认配置  
+1. **用户特定配置** (`reading_overrides` / `curl_config.users[].cookie_refresh_ql`) - 最高优先级
+2. **全局配置** (`reading` / `hack.cookie_refresh_ql`) - 默认配置
 3. **程序默认值** - 最低优先级
 
 ### 2. 智能书籍管理
@@ -1051,10 +1071,12 @@ curl_config:
   users:
     - name: "账号1"
       file_path: "account1_curl.txt"
+      cookie_refresh_ql: true
       reading_overrides:
         target_duration: "45-90"
     - name: "账号2"  
       file_path: "account2_curl.txt"
+      cookie_refresh_ql: false
       reading_overrides:
         target_duration: "30-60"
 ```
@@ -1062,6 +1084,7 @@ curl_config:
 **执行特点：**
 - 通过 `MAX_CONCURRENT_USERS` 控制是否并发执行（默认1则顺序执行）
 - 单个账号失败不影响其他账号
+- 每个账号可独立设置 `cookie_refresh_ql`
 - 提供详细的多用户统计报告
 
 **传统方式（并行运行）：**

@@ -20,6 +20,7 @@ curl_config:
   users:
     - name: "user1"
       file_path: "user1_curl.txt"
+      cookie_refresh_ql: true
       # 可选：用户特定的阅读参数覆盖
       reading_overrides:
         target_duration: "45-90"
@@ -35,7 +36,7 @@ curl_config:
     
     - name: "user3"
       file_path: "user3_curl.txt"
-      # 不设置overrides则使用全局配置
+      # 不设置 overrides 或 cookie_refresh_ql 时则使用全局配置
 
 # 阅读配置（全局默认配置，可被用户特定配置覆盖）
 reading:
@@ -228,8 +229,8 @@ notification:
 
 # Hack配置（用于解决特殊兼容性问题）
 hack:
-  # Cookie刷新时ql属性设置
-  # 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
+  # Cookie刷新时ql属性全局默认值
+  # 多用户模式下可通过 curl_config.users[].cookie_refresh_ql 为单个用户覆盖
   # 默认值：false，如果遇到cookie刷新失败的问题，可以尝试设置为true
   cookie_refresh_ql: false
 

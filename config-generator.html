@@ -1436,6 +1436,17 @@ history:
                                class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                data-user-input="${userCount}-target_duration" onchange="updateConfigPreview()">
                     </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Cookie刷新QL（可选）</label>
+                        <select
+                            class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                            data-user-input="${userCount}-cookie_refresh_ql" onchange="updateConfigPreview()">
+                            <option value="">沿用全局默认值</option>
+                            <option value="false">false</option>
+                            <option value="true">true</option>
+                        </select>
+                        <p class="mt-1 text-xs text-gray-500">仅当该用户需要与全局 hack.cookie_refresh_ql 不同时设置。</p>
+                    </div>
                 </div>
             `;
 
@@ -1680,11 +1691,15 @@ history:
                     const name = userElement.querySelector(`[data-user-input="${userId}-name"]`)?.value;
                     const file_path = userElement.querySelector(`[data-user-input="${userId}-file_path"]`)?.value;
                     const target_duration = userElement.querySelector(`[data-user-input="${userId}-target_duration"]`)?.value;
+                    const cookie_refresh_ql = userElement.querySelector(`[data-user-input="${userId}-cookie_refresh_ql"]`)?.value;
 
                     if (name && file_path) {
                         const user = { name, file_path };
                         if (target_duration) {
                             user.reading_overrides = { target_duration };
+                        }
+                        if (cookie_refresh_ql !== "") {
+                            user.cookie_refresh_ql = cookie_refresh_ql === 'true';
                         }
                         config.curl_config.users.push(user);
                     }
