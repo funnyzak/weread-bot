@@ -6,9 +6,43 @@
 [![Python](https://img.shields.io/badge/python-3.9+-blue?style=flat-square)](https://www.python.org/)
 [![GitHub license](https://img.shields.io/github/license/funnyzak/weread-bot?style=flat-square)](https://github.com/funnyzak/weread-bot/blob/main/LICENSE)
 
-WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真实用户阅读行为来积累阅读时长，支持多用户多种运行模式（立即执行、定时任务、守护进程），适用于需要提升微信读书等级或完成阅读任务的用户场景。
+WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真实用户阅读行为来积累阅读时长，支持多用户、多种运行模式（立即执行、定时任务、守护进程）、执行历史和多平台通知，适用于需要提升微信读书等级或完成阅读任务的用户场景。
 
-💗 感谢 [findmover/wxread](https://github.com/findmover/wxread) 提供思路和部分代码支持。
+感谢 [findmover/wxread](https://github.com/findmover/wxread) 提供思路和部分代码支持。
+
+## 适合哪些用户
+
+- 想在本地先快速跑通一个账号的个人用户
+- 想用 `config.yaml` 管理参数、通知和定时任务的用户
+- 需要同时维护多个微信读书账号的用户
+- 想通过 Docker 或 GitHub Actions 长期自动执行的用户
+- 希望在运行前先做只读诊断、运行后保留执行历史的用户
+
+## 快速选择
+
+| 你的场景 | 推荐入口 |
+|--------|----------|
+| 先跑通单账号 | [快速开始](#快速开始) |
+| 需要最小化配置说明 | [配置说明](#配置说明) |
+| 需要多个账号 | [多用户配置](#多用户配置) |
+| 想用 GitHub Actions | [方式四：GitHub Actions 云端运行](#方式四github-actions-云端运行) |
+| 想用 Docker | [方式六：Docker 方式运行](#方式六docker-方式运行) |
+| 想先排错 | [方式五：不同运行模式](#方式五不同运行模式) |
+| 想深入了解抓包和高级能力 | [抓包配置详解](#抓包配置详解) / [高级功能](#高级功能) |
+
+## 首次使用建议
+
+- 先准备一份可用的微信读书 cURL 请求，再开始配置
+- 初次运行建议先执行 `--validate-config` 和 `--dry-run`
+- 如果你的系统没有 `python` 命令，请把文档中的 `python` 替换为 `python3`
+
+建议第一次执行时使用以下顺序：
+
+```bash
+python weread-bot.py --validate-config --config config.yaml
+python weread-bot.py --dry-run --config config.yaml
+python weread-bot.py --show-last-run --config config.yaml
+```
 
 ## 核心功能
 
@@ -109,6 +143,7 @@ python weread-bot.py --config multiuser-config.yaml
 ```
 
 > **详细配置指南**: [GitHub Actions 自动阅读配置指南](https://github.com/funnyzak/weread-bot/blob/main/docs/github-action-autoread-guide.md)
+> 工作流默认会把 `logs/weread.log` 和 `logs/run-history.json` 作为 artifact 上传，便于回看最近执行记录。
 
 ### 方式五：不同运行模式
 
@@ -124,7 +159,29 @@ python weread-bot.py --mode daemon
 
 # 详细日志输出
 python weread-bot.py --verbose
+
+# 仅校验配置与CURL
+python weread-bot.py --validate-config --config config.yaml
+
+# 输出运行诊断信息，不发起阅读请求
+python weread-bot.py --dry-run --config config.yaml
+
+# 查看最近一次真实执行结果
+python weread-bot.py --show-last-run --config config.yaml
+
+# 查看所有可用命令
+python weread-bot.py --help
 ```
+
+说明：
+
+- `--validate-config` 会输出用户数量、用户级 `CURL` 来源、时间策略覆盖情况和全局/用户配置差异摘要。
+- `--dry-run` 会在 `--validate-config` 的基础上继续输出通知触发配置、通道就绪状态、缺失字段和禁用通道摘要，但不会真正发起阅读请求。
+- `--show-last-run` 只读取 `history.file` 指向的本地历史文件，输出最近一次真实执行摘要后退出，不会初始化阅读会话。
+- 真实执行结束后，如 `history.enabled=true`，程序会把最近执行摘要写入默认文件 `logs/run-history.json`。
+- 历史记录只保存时间、状态、用户数、阅读统计和失败分类等摘要，不会保存 Cookie、请求头或原始 CURL。
+- 如果 `curl_config.users[].reading_overrides` 中存在不支持的键，程序会直接提示对应配置路径。
+- 如果 `curl_config.users[].cookie_refresh_ql` 不是布尔值，程序会直接提示对应配置路径。
 
 ### 方式六：Docker 方式运行
 
@@ -187,7 +244,24 @@ open config-generator.html
 | 多用户模式 | `curl_config.users` | 配置多个用户的CURL文件和个性化参数 |
 | 用户名称 | `curl_config.users[].name` | 用户标识名称 |
 | CURL文件 | `curl_config.users[].file_path` | 用户专属的CURL文件路径 |
+| Cookie刷新QL覆盖 | `curl_config.users[].cookie_refresh_ql` | 用户级 Cookie 刷新 `ql` 开关，未设置时沿用全局值 |
 | 个性化配置 | `curl_config.users[].reading_overrides` | 用户特定的阅读参数覆盖 |
+
+`curl_config.users[].reading_overrides` 当前支持的键：
+
+- `mode`
+- `target_duration`
+- `reading_interval`
+- `use_curl_data_first`
+- `fallback_to_config`
+
+如果填写了其他键，`--validate-config` 和 `--dry-run` 会直接报出具体配置路径。
+
+`curl_config.users[].cookie_refresh_ql` 仅支持布尔值：
+
+- `true`: 当前用户刷新 Cookie 时使用 `"ql": true`
+- `false`: 当前用户刷新 Cookie 时使用 `"ql": false`
+- 不填写: 沿用全局 `hack.cookie_refresh_ql`
 
 
 ### 应用配置
@@ -195,8 +269,10 @@ open config-generator.html
 | 配置项 | 环境变量 | 默认值 | 说明 |
 |--------|----------|--------|------|
 | 启动模式 | `STARTUP_MODE` | `immediate` | immediate/scheduled/daemon |
-| 启动延迟 | `STARTUP_DELAY` | `60-120` | 启动随机延迟（秒） |
+| 启动延迟 | `STARTUP_DELAY` | `1-10` | 启动随机延迟（秒） |
 | 最大并发用户 | `MAX_CONCURRENT_USERS` | `1` | 多用户模式下同时执行的账号数量 |
+
+> `config.yaml.example` 中给出了更保守的示例值（如 `startup_delay: "60-300"`），用于降低固定启动特征；上表列出的是程序内置默认值。
 
 ### 阅读配置
 
@@ -212,11 +288,13 @@ open config-generator.html
 
 | 配置项 | 环境变量 | 默认值 | 说明 |
 |--------|----------|--------|------|
-| 行为模拟 | `HUMAN_SIMULATION_ENABLED` | `true` | 是否启用人类行为模拟 |
+| 行为模拟 | `HUMAN_SIMULATION_ENABLED` | `false` | 是否启用人类行为模拟 |
 | 阅读速度变化 | `READING_SPEED_VARIATION` | `true` | 是否变化阅读速度 |
-| 休息概率 | `BREAK_PROBABILITY` | `0.15` | 中途休息概率（0-1） |
-| 休息时长 | `BREAK_DURATION` | `30-180` | 休息时长（秒） |
-| User-Agent轮换 | `ROTATE_USER_AGENT` | `true` | 是否轮换User-Agent |
+| 休息概率 | `BREAK_PROBABILITY` | `0.1` | 中途休息概率（0-1） |
+| 休息时长 | `BREAK_DURATION` | `10-20` | 休息时长（秒） |
+| User-Agent轮换 | `ROTATE_USER_AGENT` | `false` | 是否轮换User-Agent |
+
+> 示例配置和 GitHub Actions 场景可能会覆盖这些默认值；以上为未提供配置时的程序内置默认值。
 
 ### 网络配置
 
@@ -238,9 +316,11 @@ Hack配置用于解决特殊兼容性问题，包含以下选项：
 | Cookie刷新QL属性 | `HACK_COOKIE_REFRESH_QL` | `false` | Cookie刷新时ql属性值设置 |
 
 **详细说明：**
-- `cookie_refresh_ql`: 控制Cookie刷新请求中的`ql`参数值
+- `cookie_refresh_ql`: 控制Cookie刷新请求中的`ql`参数值，作为全局默认值
   - `false` (默认): 使用`"ql": false`
   - `true`: 使用`"ql": true`
+- 多用户模式下，可通过 `curl_config.users[].cookie_refresh_ql` 为单个用户覆盖该值
+- 环境变量 `HACK_COOKIE_REFRESH_QL` 只能设置全局默认值，不能为不同用户分别设置
 - 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
 - 如果遇到cookie刷新失败的问题，可以尝试切换此配置的值
 
@@ -248,8 +328,41 @@ Hack配置用于解决特殊兼容性问题，包含以下选项：
 ```yaml
 # config.yaml 示例
 hack:
-  cookie_refresh_ql: false  # 或 true，根据您的环境测试确定
+  cookie_refresh_ql: false  # 全局默认值
+
+curl_config:
+  users:
+    - name: "user1"
+      file_path: "user1_curl.txt"
+      cookie_refresh_ql: true  # 仅覆盖该用户
 ```
+
+### 执行历史配置
+
+程序默认会把最近真实执行结果写入本地 JSON 文件，便于排查最近一次任务状态和失败类型。
+
+| 配置项 | 环境变量 | 默认值 | 说明 |
+|--------|----------|--------|------|
+| 历史开关 | `HISTORY_ENABLED` | `true` | 是否启用执行历史持久化 |
+| 历史文件 | `HISTORY_FILE` | `logs/run-history.json` | 历史记录输出路径 |
+| 保留条数 | `HISTORY_MAX_ENTRIES` | `50` | 仅保留最近 N 条真实执行记录 |
+| 异常落盘 | `HISTORY_PERSIST_RUNTIME_ERROR` | `true` | 真实执行运行时异常时是否追加失败记录 |
+
+示例：
+
+```yaml
+history:
+  enabled: true
+  file: "logs/run-history.json"
+  max_entries: 50
+  persist_runtime_error: true
+```
+
+说明：
+
+- `--validate-config` 与 `--dry-run` 不会写入历史，避免污染真实执行结果。
+- 历史文件内容损坏时，程序会记录警告并回退为空历史，不会阻断主流程。
+- 历史记录不会保存敏感请求数据，例如 Cookie、请求头和原始 CURL。
 
 ### 使用建议
 
@@ -264,8 +377,24 @@ hack:
 |--------|----------|--------|------|
 | 通知开关 | `NOTIFICATION_ENABLED` | `true` | 是否启用通知 |
 | 包含统计 | `INCLUDE_STATISTICS` | `true` | 是否包含详细统计 |
+| 仅失败通知 | `NOTIFICATION_ONLY_ON_FAILURE` | `false` | 启用后仅在失败或异常时推送 |
 
 **注意：通知配置采用多通道模式，支持同时启用多个通知服务**
+
+**触发策略示例：**
+
+```yaml
+notification:
+  triggers:
+    session_success: true
+    session_failure: true
+    multi_user_summary: true
+    runtime_error: true
+    general: true
+  only_on_failure: false
+```
+
+将 `only_on_failure` 设为 `true` 即等价于关闭 `session_success` 和 `multi_user_summary`，从而在单用户、多用户场景下都实现“仅失败通知”。如需更细粒度的控制，可单独调整 `triggers` 中的对应事件。
 
 | 通知服务 | 配置参数 | 环境变量 | 说明 |
 |---------|---------|----------|------|
@@ -414,7 +543,7 @@ hack:
 
 ## 运行模式详解
 
-### 1. 立即执行模式 (immediate)
+### 立即执行模式（immediate）
 ```bash
 python weread-bot.py
 # 或
@@ -424,7 +553,7 @@ python weread-bot.py --mode immediate
 - 完成目标时长后自动退出
 - 适合单次使用或手动控制
 
-### 2. 定时执行模式 (scheduled)
+### 定时执行模式（scheduled）
 ```bash
 python weread-bot.py --mode scheduled
 ```
@@ -443,7 +572,7 @@ schedule:
 - `"30 9,18 * * *"` - 每天9:30和18:30执行（多时间点）
 - `"0 8,12,18 * * *"` - 每天8:00、12:00、18:00执行
 
-### 3. 守护进程模式 (daemon)
+### 守护进程模式（daemon）
 
 ```bash
 python weread-bot.py --mode daemon
@@ -462,9 +591,19 @@ daemon:
 - 自动处理跨天重置
 - 支持优雅关闭（Ctrl+C）
 
+### 最近执行结果查询
+
+```bash
+python weread-bot.py --show-last-run --config config.yaml
+```
+
+- 仅读取 `history.file` 指向的历史文件
+- 没有历史记录时会输出明确提示
+- 适合快速确认最近一次真实执行的状态、用户统计和失败分类
+
 ## 阅读模式详解
 
-### 1. 智能随机模式 (smart_random)
+### 智能随机模式（smart_random）
 
 ```yaml
 reading:
@@ -480,7 +619,7 @@ reading:
 - 偶尔随机跳转到其他书籍或章节
 - 有换书冷却机制，避免频繁切换
 
-### 2. 顺序阅读模式 (sequential)
+### 顺序阅读模式（sequential）
 
 ```yaml
 reading:
@@ -491,7 +630,7 @@ reading:
 - 读完一本书后自动切换到下一本
 - 最符合正常阅读逻辑
 
-### 3. 纯随机模式 (pure_random)
+### 纯随机模式（pure_random）
 
 ```yaml
 reading:
@@ -680,7 +819,7 @@ docker-compose logs -f
 
 ## 高级功能
 
-### 1. 多用户会话管理
+### 多用户会话管理
 
 ```yaml
 # 多用户配置结构
@@ -688,6 +827,7 @@ curl_config:
   users:
     - name: "用户1"                    # 用户标识名称
       file_path: "user1_curl.txt"      # 用户专属的CURL文件路径
+      cookie_refresh_ql: true          # 可选：覆盖全局 hack.cookie_refresh_ql
       reading_overrides:               # 用户特定的阅读参数覆盖（可选）
         target_duration: "45-90"       # 阅读时长
         mode: "smart_random"           # 阅读模式
@@ -706,22 +846,22 @@ curl_config:
 **多用户执行特性：**
 
 - **可控并发**：通过 `MAX_CONCURRENT_USERS` 控制同时在线的账号数量，默认1表示顺序执行
-- **独立配置**：每个用户可以有不同的阅读策略和时长
+- **独立配置**：每个用户可以有不同的阅读策略、时长和 Cookie 刷新 `ql` 开关
 - **错误隔离**：单个用户失败不影响其他用户执行
-- **统计汇总**：提供单用户和多用户的详细统计报告
+- **统计汇总**：提供单用户和多用户的详细统计报告，包含成功、失败、跳过和失败分类汇总
 
 **配置覆盖优先级：**
 
-1. **用户特定配置** (`reading_overrides`) - 最高优先级
-2. **全局配置** (`reading`) - 默认配置  
+1. **用户特定配置** (`reading_overrides` / `curl_config.users[].cookie_refresh_ql`) - 最高优先级
+2. **全局配置** (`reading` / `hack.cookie_refresh_ql`) - 默认配置
 3. **程序默认值** - 最低优先级
 
-### 2. 智能书籍管理
+### 智能书籍管理
 
 ```yaml
 reading:
   # 书籍配置列表
-  # 章节索引优先级：配置的索引值 > 自动计算的索引 > CURL提取的值
+  # 章节索引优先级：配置的索引值 > CURL提取的值 > 自动计算的索引
   books:
     - name: "深度工作"                    # 书籍名称
       book_id: "book_id_1"               # 书籍ID
@@ -775,14 +915,14 @@ reading:
 
 **章节索引优先级：**
 1. **配置的索引值**：在配置文件中明确指定的 `chapter_index` 或 `index`
-2. **自动计算的索引**：章节在配置列表中的位置（从0开始）
-3. **CURL提取的值**：从抓取的CURL命令中提取的 `ci` 值
+2. **CURL提取的值**：从抓取的CURL命令中提取的 `ci` 值
+3. **自动计算的索引**：章节在配置列表中的位置（从0开始）
 
 **如何获取章节索引？**
 1. 在微信读书网页版翻页时，查看Network请求中的 `ci` 字段值
 2. 不同章节的 `ci` 值通常是连续递增的数字
 
-### 3. 高级网络配置
+### 高级网络配置
 
 ```yaml
 network:
@@ -792,7 +932,7 @@ network:
   rate_limit: 10                 # 频率限制（请求/分钟）
 ```
 
-### 4. 多平台通知支持
+### 多平台通知支持
 
 ```yaml
 notification:
@@ -929,9 +1069,9 @@ notification:
 ### Q: 如何防止被微信识别为机器人？
 
 **A: 内置多层防检测机制：**
-- **启动延迟**：60-120秒随机延迟，避免批量启动特征
+- **启动延迟**：默认 1-10 秒随机延迟，避免批量启动特征；可按需调大
 - **阅读速度变化**：每30秒调整阅读速度（0.8-1.3倍）
-- **中途休息**：15%概率随机休息30-180秒
+- **中途休息**：默认 10% 概率随机休息 10-20 秒；可按需调大
 - **智能换书**：基于概率的书籍和章节切换
 - **时间戳随机化**：请求时间包含随机偏移
 - **Cookie自动刷新**：维护有效的认证状态
@@ -969,10 +1109,12 @@ curl_config:
   users:
     - name: "账号1"
       file_path: "account1_curl.txt"
+      cookie_refresh_ql: true
       reading_overrides:
         target_duration: "45-90"
     - name: "账号2"  
       file_path: "account2_curl.txt"
+      cookie_refresh_ql: false
       reading_overrides:
         target_duration: "30-60"
 ```
@@ -980,6 +1122,7 @@ curl_config:
 **执行特点：**
 - 通过 `MAX_CONCURRENT_USERS` 控制是否并发执行（默认1则顺序执行）
 - 单个账号失败不影响其他账号
+- 每个账号可独立设置 `cookie_refresh_ql`
 - 提供详细的多用户统计报告
 
 **传统方式（并行运行）：**
@@ -1019,7 +1162,7 @@ reading:
 
 ## 性能优化建议
 
-### 1. 网络优化
+### 网络优化
 ```yaml
 network:
   timeout: 30              # 根据网络情况调整
@@ -1028,7 +1171,7 @@ network:
   rate_limit: 8            # 降低请求频率更安全
 ```
 
-### 2. 行为优化
+### 行为优化
 ```yaml
 human_simulation:
   break_probability: 0.2   # 提高休息频率
@@ -1036,12 +1179,17 @@ human_simulation:
   reading_speed_variation: true
 ```
 
-### 3. 时长策略
+### 时长策略
 ```yaml
 reading:
   target_duration: "60-90"   # 较短时长更安全
   reading_interval: "30-45"  # 增加请求间隔
 ```
+
+## 项目文档
+
+- [文档总览](docs/README.md)
+- [GitHub Actions 自动阅读配置指南](docs/github-action-autoread-guide.md)
 
 ## 安全建议
 

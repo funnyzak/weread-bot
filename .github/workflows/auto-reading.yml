@@ -1,24 +1,26 @@
 name: Auto Reading Bot
 
 on:
-  # 取消注释以下行启用定时触发
-  schedule:
-    - cron: '0 9 * * *'   # UTC 12:00 = 北京时间 20:00
-     
+  # 定时触发 - Fork 后如需自动定时运行，请取消下方 schedule 注释
+   schedule:
+     - cron: '0 12 * * *'   # UTC 12:00 = 北京时间 20:00
+  
+  # 拉取请求触发，用于测试阅读
   pull_request:
     branches: [ main ]
     paths:
       - 'weread-bot.py'
       - 'requirements.txt'
+      - '.github/workflows/auto-reading.yml'
       - '.github/workflows/ci.yml'
 
   # 手动触发
   workflow_dispatch:
     inputs:
       target_duration:
-        description: '阅读时长（分钟，格式：10-20。建议：频繁运行时设置5-10分钟，GitHub免费版每月2000分钟额度）'
+        description: '阅读时长（分钟，格式：10-20。留空时优先使用仓库 Secret TARGET_DURATION，否则默认 1-2）'
         required: false
-        default: '10-20'
+        default: ''
         type: string
       reading_mode:
         description: '阅读模式'
@@ -34,6 +36,21 @@ on:
         required: false
         default: true
         type: boolean
+      notify_only_on_failure:
+        description: '仅失败时发送通知'
+        required: false
+        default: false
+        type: boolean
+      history_enabled:
+        description: '启用执行历史持久化'
+        required: false
+        default: true
+        type: boolean
+      history_max_entries:
+        description: '执行历史最多保留多少条'
+        required: false
+        default: '50'
+        type: string
 
 jobs:
   auto-reading:
@@ -53,9 +70,27 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+
+    - name: Resolve runtime parameters
+      env:
+        INPUT_TARGET_DURATION: ${{ github.event.inputs.target_duration }}
+        SECRET_TARGET_DURATION: ${{ secrets.TARGET_DURATION }}
+      run: |
+        target_duration="${INPUT_TARGET_DURATION}"
+
+        if [ -z "$target_duration" ]; then
+          target_duration="${SECRET_TARGET_DURATION}"
+        fi
+
+        if [ -z "$target_duration" ]; then
+          target_duration="1-2"
+        fi
+
+        echo "TARGET_DURATION=$target_duration" >> "$GITHUB_ENV"
+
     - name: Create config file
       run: |
-        cat > config.yaml << 'EOF'
+        cat > config.yaml <<EOF
         app:
           name: "WeReadBot-GitHub-Action"
           startup_mode: "immediate"
@@ -63,8 +98,8 @@ jobs:
 
         reading:
           mode: "${{ github.event.inputs.reading_mode || 'smart_random' }}"
-          # 目标阅读时长（分钟），支持区间随机，格式如："1" 或 "1-2"，当前为：1分钟
-          target_duration: "${{ github.event.inputs.target_duration || '1' }}"
+          # 目标阅读时长（分钟），支持区间随机，格式如："1" 或 "1-2"
+          target_duration: "${TARGET_DURATION}"
           reading_interval: "30-48"
           use_curl_data_first: true
           fallback_to_config: true
@@ -87,8 +122,15 @@ jobs:
           rate_limit: 10
 
         notification:
-          enabled: ${{ github.event.inputs.notify_enabled || true }}
+          enabled: ${{ github.event.inputs.notify_enabled != 'false' }}
           include_statistics: true
+          only_on_failure: ${{ github.event.inputs.notify_only_on_failure == 'true' }}
+          triggers:
+            session_success: ${{ github.event.inputs.notify_only_on_failure != 'true' }}
+            multi_user_summary: ${{ github.event.inputs.notify_only_on_failure != 'true' }}
+            session_failure: true
+            runtime_error: true
+            general: true
 
         logging:
           level: "INFO"
@@ -97,6 +139,12 @@ jobs:
           max_size: "10MB"
           backup_count: 5
           console: true
+
+        history:
+          enabled: ${{ github.event.inputs.history_enabled != 'false' }}
+          file: "logs/run-history.json"
+          max_entries: ${{ github.event.inputs.history_max_entries || '50' }}
+          persist_runtime_error: true
         EOF
 
     - name: Create logs directory
@@ -141,16 +189,35 @@ jobs:
         SERVERCHAN3_SHORT: ${{ secrets.SERVERCHAN3_SHORT }}
         PUSHDEER_PUSHKEY: ${{ secrets.PUSHDEER_PUSHKEY }}
         PUSHDEER_TYPE: ${{ secrets.PUSHDEER_TYPE }}
+        NOTIFICATION_ONLY_ON_FAILURE: ${{ secrets.NOTIFICATION_ONLY_ON_FAILURE || github.event.inputs.notify_only_on_failure == 'true' || 'false' }}
+        HISTORY_ENABLED: ${{ secrets.HISTORY_ENABLED || github.event.inputs.history_enabled == 'true' || 'true' }}
+        HISTORY_FILE: ${{ secrets.HISTORY_FILE || 'logs/run-history.json' }}
+        HISTORY_MAX_ENTRIES: ${{ secrets.HISTORY_MAX_ENTRIES || github.event.inputs.history_max_entries || '50' }}
+        HISTORY_PERSIST_RUNTIME_ERROR: ${{ secrets.HISTORY_PERSIST_RUNTIME_ERROR || 'true' }}
         # 其他环境变量
         TZ: 'Asia/Shanghai'
       run: |
         echo "开始自动阅读任务..."
         echo "当前时间: $(date)"
         echo "运行参数:"
-        echo "- 阅读时长: ${{ github.event.inputs.target_duration || '45-90' }}"
+        echo "- 阅读时长: ${TARGET_DURATION}"
         echo "- 阅读模式: ${{ github.event.inputs.reading_mode || 'smart_random' }}"
-        echo "- 启用通知: ${{ github.event.inputs.notify_enabled || true }}"
+        echo "- 启用通知: ${{ github.event.inputs.notify_enabled != 'false' }}"
+        echo "- 仅失败通知: ${{ github.event.inputs.notify_only_on_failure == 'true' }}"
+        echo "- 历史持久化: ${{ github.event.inputs.history_enabled != 'false' }}"
+        echo "- 历史保留条数: ${{ github.event.inputs.history_max_entries || '50' }}"
         echo "================================"
         
         # 运行阅读机器人
         python weread-bot.py --config config.yaml
+
+    - name: Upload runtime artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: weread-runtime-${{ github.run_id }}
+        path: |
+          logs/weread.log
+          logs/run-history.json
+        if-no-files-found: warn
+        retention-days: 7
