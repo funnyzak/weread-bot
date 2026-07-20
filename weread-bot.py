@@ -96,8 +96,6 @@ class LogContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.user = CURRENT_USER.get()
         record.session_id = CURRENT_SESSION_ID.get()
-        record.msg = redact_for_log(record.getMessage())
-        record.args = ()
         return True
 
 
@@ -105,6 +103,7 @@ class JsonLogFormatter(logging.Formatter):
     """输出可逐行解析的 JSON 日志。"""
 
     def format(self, record: logging.LogRecord) -> str:
+        record = _redacted_log_record(record)
         payload = {
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname,
@@ -131,6 +130,16 @@ class JsonLogFormatter(logging.Formatter):
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+class RedactingLogFormatter(logging.Formatter):
+    """在记录副本上脱敏，避免修改 handler 共享的 LogRecord。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        return super().format(_redacted_log_record(record))
+
+    def formatException(self, exc_info: Any) -> str:
+        return redact_for_log(super().formatException(exc_info))
+
+
 @contextmanager
 def log_context(user: str, session_id: Optional[str] = None):
     """在当前异步上下文中关联用户和会话。"""
@@ -148,6 +157,9 @@ SENSITIVE_LOG_KEYS = {
     "authorization", "cookie", "cookies", "wr_skey", "token", "bot_token",
     "webhook_url", "secret", "ps", "pc", "sendkey", "pushkey", "device_key",
 }
+SENSITIVE_LOG_KEY_PATTERN = "|".join(
+    sorted((re.escape(key) for key in SENSITIVE_LOG_KEYS), key=len, reverse=True)
+)
 
 
 def _secret_marker(value: Any) -> str:
@@ -170,17 +182,31 @@ def redact_for_log(value: Any) -> Any:
         return [redact_for_log(item) for item in value]
     if isinstance(value, str):
         redacted = re.sub(
-            r"(?i)((?:wr_skey|token|secret|ps|pc)=)[^;\s&]+",
-            lambda match: match.group(1) + "[REDACTED]",
+            (
+                rf"(?i)(?P<prefix>[\"']?(?:{SENSITIVE_LOG_KEY_PATTERN})"
+                r"[\"']?\s*[:=]\s*)"
+                r"(?P<quote>[\"']?)(?P<secret>.*?)(?P=quote)"
+                r"(?=\s*[,;}\]]|\s*$)"
+            ),
+            lambda match: (
+                match.group("prefix")
+                + match.group("quote")
+                + "[REDACTED]"
+                + match.group("quote")
+            ),
             value,
-        )
-        redacted = re.sub(
-            r"(?i)(authorization:\s*(?:bearer\s+)?)[^\s]+",
-            r"\1[REDACTED]",
-            redacted,
         )
         return redacted
     return value
+
+
+def _redacted_log_record(record: logging.LogRecord) -> logging.LogRecord:
+    """复制日志记录并脱敏最终消息，保留原记录供其他 handler 使用。"""
+    redacted_record = logging.makeLogRecord(record.__dict__.copy())
+    redacted_record.msg = redact_for_log(record.getMessage())
+    redacted_record.args = ()
+    redacted_record.exc_text = None
+    return redacted_record
 
 
 def safe_url_for_log(url: str) -> str:
@@ -3084,8 +3110,8 @@ class WeReadApplication:
         result = RunResult(
             final_status="failed",
             user_count=user_count,
-            failed_users=user_count,
-            failure_categories={category.value: user_count},
+            failed_users=0,
+            failure_categories={category.value: 1},
             continue_on_failure=True,
         )
         logging.error(format_error_message("❌ 常驻会话执行失败", exc))
@@ -4676,7 +4702,7 @@ def setup_logging(logging_config: LoggingConfig = None, verbose: bool = False):
     if logging_config.format == "json":
         formatter = JsonLogFormatter()
     else:
-        formatter = logging.Formatter(
+        formatter = RedactingLogFormatter(
             format_map.get(logging_config.format, format_map['detailed'])
         )
     context_filter = LogContextFilter()

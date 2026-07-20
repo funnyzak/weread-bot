@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import logging
+import sys
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -45,6 +46,23 @@ class LogRedactionTests(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(stream.getvalue())
         self.assertNotIn("unique-sensitive-token", payload["message"])
 
+    def test_json_formatter_redacts_json_shaped_secret(self):
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.addFilter(self.bot.LogContextFilter())
+        handler.setFormatter(self.bot.JsonLogFormatter())
+        logger = logging.getLogger(f"json-redaction-test-{id(self)}")
+        logger.handlers = [handler]
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+
+        logger.error(
+            'request failed: {"token": "unique-json-secret", "ok": false}'
+        )
+
+        payload = json.loads(stream.getvalue())
+        self.assertNotIn("unique-json-secret", payload["message"])
+
     def test_missing_identity_warning_does_not_echo_other_identity(self):
         session = object.__new__(self.bot.WeReadSessionManager)
         session.user_name = "alice"
@@ -75,13 +93,36 @@ class LogRedactionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record.msg, "request failed: token=%s")
         self.assertEqual(record.args, ("unique-shared-secret",))
 
+    def test_text_formatter_ignores_unredacted_exception_cache(self):
+        secret = "unique-exception-secret"
+        try:
+            raise RuntimeError(f"token={secret}")
+        except RuntimeError:
+            exc_info = sys.exc_info()
+
+        record = logging.LogRecord(
+            name="cached-exception",
+            level=logging.ERROR,
+            pathname=__file__,
+            lineno=1,
+            msg="request failed",
+            args=(),
+            exc_info=exc_info,
+        )
+        record.exc_text = "RuntimeError: token=unique-exception-secret"
+
+        rendered = self.bot.RedactingLogFormatter("%(message)s").format(record)
+
+        self.assertNotIn("unique-exception-secret", rendered)
+
     def test_curl_validation_does_not_echo_short_identity_values(self):
-        errors = self.bot.CurlParser.validate_curl_headers(
-            {"User-Agent": "Mozilla/5.0"},
-            {"wr_skey": "long-enough-key"},
-            {"appId": "x", "ps": "y", "pc": "z"},
-            "alice",
-        )[1]
+        with self.assertLogs(level=logging.ERROR):
+            errors = self.bot.CurlParser.validate_curl_headers(
+                {"User-Agent": "Mozilla/5.0"},
+                {"wr_skey": "long-enough-key"},
+                {"appId": "x", "ps": "y", "pc": "z"},
+                "alice",
+            )[1]
         rendered = "\n".join(errors)
         self.assertNotIn("字段 appId 长度异常: x", rendered)
         self.assertNotIn("字段 ps 长度异常: y", rendered)
