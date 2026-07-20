@@ -1,23 +1,33 @@
-# Repository Guidelines
+# AGENTS.md
 
-## Project Structure & Module Organization
-Main automation logic lives in `weread-bot.py`, orchestrating scheduling, reading simulation, and notifications. Configuration templates (`config.yaml.example`) stay at the root; copy to `config.yaml` for local overrides. Docs and deployment references belong under `docs/`, persistent logs under `logs/`, and disposable experiments or generators inside `tmp/` to keep history clean.
+本文件适用于整个仓库。用户明确要求优先；子目录存在更近的 `AGENTS.md` 时，以更近的规则为准。
 
-## Build, Test, and Development Commands
-- `python -m venv venv && source venv/bin/activate`: provision the Python 3.9+ environment expected by schedulers and HTTP clients.
-- `pip install -r requirements.txt`: install runtime dependencies (requests, schedule, apprise, PyYAML, urllib3).
-- `python weread-bot.py --config config.yaml --verbose`: run an immediate session with explicit config and expanded logging for debugging.
-- `python weread-bot.py --mode scheduled --config config.yaml`: exercise the cron-driven path and confirm the schedule block parses correctly.
-- `python weread-bot.py --mode daemon --config config.yaml`: validate long-lived loops, session intervals, and graceful signal handling.
+## 单文件约束
 
-## Coding Style & Naming Conventions
-Follow PEP 8 with four-space indentation, snake_case functions, and PascalCase dataclasses or enums. Extend the existing dataclasses instead of injecting bare dicts so validation stays centralized. Reuse module-level constants for defaults, add type hints on new functions, and route diagnostics through the configured logger rather than `print`. Align YAML keys and examples with the provided templates.
+- 所有运行时代码必须集中在 `weread-bot.py`。
+- 新功能、修复和重构始终采用单文件实现。不得拆分模块、创建包、增加辅助源码文件，或把运行时代码移入其他文件。
+- 测试可修改 `tests/` 中的现有文件，但不得借测试或脚本绕过单文件约束。
+- 优先复用现有实现。非必要不新增文件、依赖或抽象层。
 
-## Testing Guidelines
-There is no dedicated unit-test suite yet; rely on scenario-driven runs. Use anonymized CURL payloads and short `TARGET_DURATION` windows (5-10 minutes) when iterating locally, then inspect `logs/weread.log` for retry cadence, notification output, and multi-user sequencing issues. When extending notification transports or scheduling, outline the manual test matrix and attach relevant log excerpts in the PR.
+## 目录约定
 
-## Commit & Pull Request Guidelines
-Use Conventional Commits (`feat:`, `fix:`, `docs:`, `chore:`) as demonstrated in recent history. Each PR should explain the motivation, reference related issues, list new environment variables or config keys, and include reproduction steps plus verification evidence (command snippets or screenshots for doc changes). Keep PRs scoped to a single concern and update affected docs such as `docs/github-action-autoread-guide.md`.
+- `weread-bot.py`：唯一的运行时代码文件。
+- `config.yaml.example`：配置模板；本地配置使用 `config.yaml`。
+- `tests/`：自动化测试。
+- `docs/`：使用和部署文档。
+- `scripts/`：用户明确要求的独立工具脚本，不得存放项目运行时代码。
 
-## Security & Configuration Tips
-Never commit CURL strings or API tokens; load them via environment variables like `export WEREAD_CURL_BASH_FILE_PATH=/secure/curl.txt` or GitHub Actions secrets. Store per-user overrides under `config.yaml`'s `curl_config.users` array, scrub logs before sharing, rotate cookies regularly, and keep any `.env` files outside version control.
+新建文档前先检查现有内容，能更新就不重复创建。代码或配置变更影响使用方式时，同步更新相关文档和配置示例。
+
+## 开发规范
+
+- 使用 Python 3.9+，遵循 PEP 8，四空格缩进。
+- 函数和变量使用 `snake_case`，数据类和枚举使用 `PascalCase`。
+- 新增函数写类型注解；配置数据优先复用现有数据类和校验逻辑。
+- 复用模块级默认值，YAML 键名与 `config.yaml.example` 保持一致。
+- 日志统一使用现有 logger，不使用 `print` 输出诊断信息。
+
+## 安全要求
+
+- 密钥、Token、Cookie 和 CURL 内容只能从环境变量或本地安全配置读取。
+- 敏感信息不得写入代码、文档、测试数据或提交记录。分享日志前先完成脱敏。
