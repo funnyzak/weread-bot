@@ -191,6 +191,28 @@ class SessionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, self.bot.SessionStatus.SUCCESS)
         self.assertEqual(result.stats.actual_duration_seconds, 30)
 
+    async def test_progress_log_limits_target_minutes_to_two_decimals(self):
+        clock = FakeClock()
+
+        def successful_read():
+            clock.advance(2.2841002174537737 * 60)
+            return True, 0.01
+
+        manager = self._manager(
+            [successful_read],
+            clock,
+            target="2.2841002174537737",
+        )
+
+        with self.assertLogs(level="INFO") as captured:
+            result = await manager.start_reading_session()
+
+        self.assertEqual(result.status, self.bot.SessionStatus.SUCCESS)
+        self.assertIn(
+            "✅ 阅读成功，进度: 2分钟 / 2.28分钟",
+            "\n".join(captured.output),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

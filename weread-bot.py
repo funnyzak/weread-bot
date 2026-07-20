@@ -3825,7 +3825,7 @@ class WeReadSessionManager:
                         last_failure_category = None
                         last_time = int(time.time())
                         logging.info(
-                            "✅ 阅读成功，进度: %s分钟 / %s分钟",
+                            "✅ 阅读成功，进度: %s分钟 / %.2f分钟",
                             self.session_stats.actual_duration_seconds // 60,
                             target_minutes,
                         )
