@@ -50,9 +50,13 @@ import urllib.parse
 import signal
 import argparse
 import tempfile
+import traceback
+import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple, Set, Union
+from typing import Optional, Dict, Any, List, Tuple, Set, Union, Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from logging.handlers import RotatingFileHandler
@@ -81,40 +85,109 @@ from zoneinfo import ZoneInfo
 VERSION = "0.3.8"
 REPO = "https://github.com/funnyzak/weread-bot"
 
+CURRENT_USER = ContextVar("weread_user", default="system")
+CURRENT_SESSION_ID = ContextVar("weread_session_id", default="-")
 
-def get_missing_dependencies() -> List[str]:
-    """获取缺失依赖列表"""
-    missing_deps = []
-    if yaml is None:
-        missing_deps.append("PyYAML")
-    if requests is None:
-        missing_deps.append("requests")
-    if httpx is None:
-        missing_deps.append("httpx")
-    if croniter is None:
-        missing_deps.append("croniter")
-    return missing_deps
+
+class LogContextFilter(logging.Filter):
+    """向日志记录注入并发安全的会话上下文。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.user = CURRENT_USER.get()
+        record.session_id = CURRENT_SESSION_ID.get()
+        return True
+
+
+class JsonLogFormatter(logging.Formatter):
+    """输出可逐行解析的 JSON 日志。"""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "event": getattr(record, "event", record.name),
+            "message": record.getMessage(),
+            "user": getattr(record, "user", CURRENT_USER.get()),
+            "session_id": getattr(
+                record, "session_id", CURRENT_SESSION_ID.get()
+            ),
+        }
+        for name in (
+            "error_category", "attempt", "max_attempts", "delay", "elapsed_ms"
+        ):
+            value = getattr(record, name, None)
+            if value is not None:
+                payload[name] = value
+        if record.exc_info:
+            payload["exception_type"] = record.exc_info[0].__name__
+            payload["exception"] = str(record.exc_info[1])
+            if logging.getLogger().isEnabledFor(logging.DEBUG):
+                payload["traceback"] = "".join(
+                    traceback.format_exception(*record.exc_info)
+                )
+        return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+@contextmanager
+def log_context(user: str, session_id: Optional[str] = None):
+    """在当前异步上下文中关联用户和会话。"""
+    resolved_session_id = session_id or uuid.uuid4().hex[:10]
+    user_token = CURRENT_USER.set(user or "default")
+    session_token = CURRENT_SESSION_ID.set(resolved_session_id)
+    try:
+        yield resolved_session_id
+    finally:
+        CURRENT_SESSION_ID.reset(session_token)
+        CURRENT_USER.reset(user_token)
+
+
+SENSITIVE_LOG_KEYS = {
+    "authorization", "cookie", "cookies", "wr_skey", "token", "bot_token",
+    "webhook_url", "secret", "ps", "pc", "sendkey", "pushkey", "device_key",
+}
+
+
+def _secret_marker(value: Any) -> str:
+    digest = hashlib.sha256(str(value).encode("utf-8")).hexdigest()[-8:]
+    return f"[REDACTED:{digest}]"
+
+
+def redact_for_log(value: Any) -> Any:
+    """递归脱敏日志数据，不保留密钥原始前缀。"""
+    if isinstance(value, dict):
+        return {
+            key: (
+                _secret_marker(item)
+                if str(key).lower() in SENSITIVE_LOG_KEYS
+                else redact_for_log(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [redact_for_log(item) for item in value]
+    if isinstance(value, str):
+        redacted = re.sub(
+            r"(?i)((?:wr_skey|token|secret|ps|pc)=)[^;\s&]+",
+            lambda match: match.group(1) + "[REDACTED]",
+            value,
+        )
+        redacted = re.sub(
+            r"(?i)(authorization:\s*(?:bearer\s+)?)[^\s]+",
+            r"\1[REDACTED]",
+            redacted,
+        )
+        return redacted
+    return value
+
+
+def safe_url_for_log(url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
 
 
 # =========================
 # 常量与数据模型
 # =========================
-
-
-class NotificationMethod(Enum):
-    """通知方式枚举"""
-    PUSHPLUS = "pushplus"
-    TELEGRAM = "telegram"
-    WXPUSHER = "wxpusher"
-    APPRISE = "apprise"
-    BARK = "bark"
-    NTFY = "ntfy"
-    FEISHU = "feishu"
-    WEWORK = "wework"
-    DINGTALK = "dingtalk"
-    GOTIFY = "gotify"
-    SERVERCHAN3 = "serverchan3"
-    PUSHDEER = "pushdeer"
 
 
 class NotificationEvent(str, Enum):
@@ -155,6 +228,13 @@ class RuntimeErrorCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
+class SessionStatus(str, Enum):
+    """单个用户会话状态。"""
+    SUCCESS = "success"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 USER_READING_OVERRIDE_FIELDS = {
     "mode": "reading.mode",
     "target_duration": "reading.target_duration",
@@ -176,6 +256,53 @@ NOTIFICATION_CHANNEL_REQUIRED_FIELDS = {
     "gotify": ["server", "token"],
     "serverchan3": ["uid", "sendkey"],
     "pushdeer": ["pushkey"],
+}
+NOTIFICATION_CHANNEL_ENV_FIELDS = {
+    "pushplus": {"token": "PUSHPLUS_TOKEN"},
+    "telegram": {
+        "bot_token": "TELEGRAM_BOT_TOKEN",
+        "chat_id": "TELEGRAM_CHAT_ID",
+    },
+    "wxpusher": {"spt": "WXPUSHER_SPT"},
+    "apprise": {"url": "APPRISE_URL"},
+    "bark": {
+        "server": "BARK_SERVER",
+        "device_key": "BARK_DEVICE_KEY",
+        "sound": "BARK_SOUND",
+    },
+    "ntfy": {
+        "server": "NTFY_SERVER",
+        "topic": "NTFY_TOPIC",
+        "token": "NTFY_TOKEN",
+    },
+    "feishu": {
+        "webhook_url": "FEISHU_WEBHOOK_URL",
+        "msg_type": "FEISHU_MSG_TYPE",
+    },
+    "wework": {
+        "webhook_url": "WEWORK_WEBHOOK_URL",
+        "msg_type": "WEWORK_MSG_TYPE",
+    },
+    "dingtalk": {
+        "webhook_url": "DINGTALK_WEBHOOK_URL",
+        "msg_type": "DINGTALK_MSG_TYPE",
+    },
+    "gotify": {
+        "server": "GOTIFY_SERVER",
+        "token": "GOTIFY_TOKEN",
+        "priority": "GOTIFY_PRIORITY",
+        "title": "GOTIFY_TITLE",
+    },
+    "serverchan3": {
+        "uid": "SERVERCHAN3_UID",
+        "sendkey": "SERVERCHAN3_SENDKEY",
+        "tags": "SERVERCHAN3_TAGS",
+        "short": "SERVERCHAN3_SHORT",
+    },
+    "pushdeer": {
+        "pushkey": "PUSHDEER_PUSHKEY",
+        "type": "PUSHDEER_TYPE",
+    },
 }
 
 
@@ -256,6 +383,7 @@ class ReadingConfig:
     reading_interval: str = "25-35"
     use_curl_data_first: bool = True
     fallback_to_config: bool = True
+    max_consecutive_failures: int = 5
     books: List[BookInfo] = field(default_factory=list)
     smart_random: SmartRandomConfig = field(default_factory=SmartRandomConfig)
 
@@ -495,9 +623,309 @@ class ReadingSession:
         🎉 本次阅读任务完成！"""
 
 
+@dataclass
+class SessionResult:
+    """单个用户会话的明确结果。"""
+    status: SessionStatus
+    stats: ReadingSession
+    error_category: Optional[RuntimeErrorCategory] = None
+    message: str = ""
+
+
+@dataclass
+class RunResult:
+    """一次应用运行的聚合结果。"""
+    final_status: str
+    user_count: int
+    successful_users: int = 0
+    failed_users: int = 0
+    cancelled_users: int = 0
+    skipped_users: int = 0
+    total_duration_seconds: int = 0
+    total_reads: int = 0
+    total_failed_reads: int = 0
+    failure_categories: Dict[str, int] = field(default_factory=dict)
+    continue_on_failure: bool = False
+
+    @property
+    def exit_code(self) -> int:
+        return 0 if self.final_status == "success" else 1
+
+    def to_summary_dict(self) -> Dict[str, Any]:
+        return {
+            "final_status": self.final_status,
+            "user_count": self.user_count,
+            "successful_users": self.successful_users,
+            "failed_users": self.failed_users,
+            "cancelled_users": self.cancelled_users,
+            "skipped_users": self.skipped_users,
+            "total_duration_seconds": self.total_duration_seconds,
+            "total_reads": self.total_reads,
+            "total_failed_reads": self.total_failed_reads,
+            "failure_categories": self.failure_categories.copy(),
+            "continue_on_failure": self.continue_on_failure,
+        }
+
+    @classmethod
+    def from_session_results(
+        cls,
+        results: List[SessionResult],
+        skipped_users: int = 0,
+        continue_on_failure: bool = False,
+    ) -> "RunResult":
+        successful = sum(
+            result.status == SessionStatus.SUCCESS for result in results
+        )
+        failed = sum(
+            result.status == SessionStatus.FAILED for result in results
+        )
+        cancelled = sum(
+            result.status == SessionStatus.CANCELLED for result in results
+        )
+        failure_categories: Dict[str, int] = {}
+        for result in results:
+            if result.error_category is not None:
+                key = result.error_category.value
+                failure_categories[key] = failure_categories.get(key, 0) + 1
+
+        if results and cancelled == len(results):
+            final_status = "cancelled"
+        elif successful == len(results) and not skipped_users:
+            final_status = "success"
+        elif successful:
+            final_status = "partial_success"
+        elif failed:
+            final_status = "failed"
+        elif cancelled:
+            final_status = "cancelled"
+        else:
+            final_status = "failed"
+
+        return cls(
+            final_status=final_status,
+            user_count=len(results) + skipped_users,
+            successful_users=successful,
+            failed_users=failed,
+            cancelled_users=cancelled,
+            skipped_users=skipped_users,
+            total_duration_seconds=sum(
+                result.stats.actual_duration_seconds for result in results
+            ),
+            total_reads=sum(
+                result.stats.successful_reads for result in results
+            ),
+            total_failed_reads=sum(
+                result.stats.failed_reads for result in results
+            ),
+            failure_categories=failure_categories,
+            continue_on_failure=continue_on_failure,
+        )
+
+
 # ==================
 # 配置与解析
 # ==================
+
+
+class ConfigError(ValueError):
+    """带配置路径的解析或语义错误。"""
+
+
+def _config_error(path: str, reason: str, value: Any) -> ConfigError:
+    safe_value = repr(value)
+    if any(key in path.lower() for key in ("token", "cookie", "secret", "content")):
+        safe_value = "已提供" if value else "未提供"
+    return ConfigError(f"{path}: {reason}，当前值={safe_value}")
+
+
+def parse_bool(value: Any, path: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    raise _config_error(path, "必须是布尔值", value)
+
+
+def parse_int(
+    value: Any, path: str, minimum: Optional[int] = None
+) -> int:
+    if isinstance(value, bool):
+        raise _config_error(path, "必须是整数", value)
+    try:
+        parsed = int(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise _config_error(path, "必须是整数", value) from exc
+    if minimum is not None and parsed < minimum:
+        raise _config_error(path, f"必须大于或等于 {minimum}", value)
+    return parsed
+
+
+def parse_float(
+    value: Any,
+    path: str,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+) -> float:
+    if isinstance(value, bool):
+        raise _config_error(path, "必须是数字", value)
+    try:
+        parsed = float(str(value).strip())
+    except (TypeError, ValueError) as exc:
+        raise _config_error(path, "必须是数字", value) from exc
+    if minimum is not None and parsed < minimum:
+        raise _config_error(path, f"必须大于或等于 {minimum}", value)
+    if maximum is not None and parsed > maximum:
+        raise _config_error(path, f"必须小于或等于 {maximum}", value)
+    return parsed
+
+
+def parse_range(
+    value: Any,
+    path: str,
+    minimum: Optional[float] = None,
+    allow_zero: bool = True,
+) -> Tuple[float, float]:
+    match = re.fullmatch(
+        r"\s*([+]?(?:\d+(?:\.\d*)?|\.\d+))"
+        r"(?:\s*-\s*([+]?(?:\d+(?:\.\d*)?|\.\d+)))?\s*",
+        str(value),
+    )
+    if not match:
+        raise _config_error(path, "必须是数字或 min-max 范围", value)
+    lower = float(match.group(1))
+    upper = float(match.group(2)) if match.group(2) is not None else lower
+    effective_minimum = minimum
+    if not allow_zero:
+        effective_minimum = max(minimum or 0.0, 0.000000001)
+    if effective_minimum is not None and lower < effective_minimum:
+        raise _config_error(
+            path, f"下限必须大于或等于 {effective_minimum}", value
+        )
+    if upper < lower:
+        raise _config_error(path, "上限不能小于下限", value)
+    return lower, upper
+
+
+def parse_choice(value: Any, path: str, choices: Set[str]) -> str:
+    normalized = str(value).strip().lower()
+    if normalized not in choices:
+        raise _config_error(
+            path, f"必须是 {', '.join(sorted(choices))} 之一", value
+        )
+    return normalized
+
+
+def validate_config_semantics(config: WeReadConfig) -> None:
+    """集中校验加载后的全局配置和用户覆盖。"""
+    config.startup_mode = parse_choice(
+        config.startup_mode,
+        "app.startup_mode",
+        {mode.value for mode in StartupMode},
+    )
+    parse_range(config.startup_delay, "app.startup_delay", minimum=0)
+    parse_int(config.max_concurrent_users, "app.max_concurrent_users", 1)
+
+    config.reading.mode = parse_choice(
+        config.reading.mode,
+        "reading.mode",
+        {mode.value for mode in ReadingMode},
+    )
+    parse_range(
+        config.reading.target_duration,
+        "reading.target_duration",
+        minimum=0.000000001,
+        allow_zero=False,
+    )
+    parse_range(
+        config.reading.reading_interval,
+        "reading.reading_interval",
+        minimum=0,
+    )
+    parse_int(
+        config.reading.max_consecutive_failures,
+        "reading.max_consecutive_failures",
+        1,
+    )
+    parse_float(
+        config.reading.smart_random.book_continuity,
+        "reading.smart_random.book_continuity",
+        0,
+        1,
+    )
+    parse_float(
+        config.reading.smart_random.chapter_continuity,
+        "reading.smart_random.chapter_continuity",
+        0,
+        1,
+    )
+    parse_int(
+        config.reading.smart_random.book_switch_cooldown,
+        "reading.smart_random.book_switch_cooldown",
+        0,
+    )
+    parse_int(config.network.timeout, "network.timeout", 1)
+    parse_int(config.network.retry_times, "network.retry_times", 1)
+    parse_range(config.network.retry_delay, "network.retry_delay", 0)
+    parse_int(config.network.rate_limit, "network.rate_limit", 0)
+    parse_float(
+        config.human_simulation.break_probability,
+        "human_simulation.break_probability",
+        0,
+        1,
+    )
+    parse_range(
+        config.human_simulation.break_duration,
+        "human_simulation.break_duration",
+        0,
+    )
+    parse_range(config.daemon.session_interval, "daemon.session_interval", 0)
+    parse_int(config.daemon.max_daily_sessions, "daemon.max_daily_sessions", 1)
+    config.logging.level = parse_choice(
+        config.logging.level,
+        "logging.level",
+        {"debug", "info", "warning", "error", "critical"},
+    ).upper()
+    config.logging.format = parse_choice(
+        config.logging.format,
+        "logging.format",
+        {"simple", "detailed", "json"},
+    )
+    parse_int(config.logging.backup_count, "logging.backup_count", 0)
+    parse_int(config.history.max_entries, "history.max_entries", 1)
+
+    for index, user in enumerate(config.users):
+        base = f"curl_config.users[{index}].reading_overrides"
+        overrides = user.reading_overrides
+        if "mode" in overrides:
+            overrides["mode"] = parse_choice(
+                overrides["mode"],
+                f"{base}.mode",
+                {mode.value for mode in ReadingMode},
+            )
+        if "target_duration" in overrides:
+            parse_range(
+                overrides["target_duration"],
+                f"{base}.target_duration",
+                minimum=0.000000001,
+                allow_zero=False,
+            )
+        if "reading_interval" in overrides:
+            parse_range(
+                overrides["reading_interval"],
+                f"{base}.reading_interval",
+                minimum=0,
+            )
+        for bool_key in ("use_curl_data_first", "fallback_to_config"):
+            if bool_key in overrides:
+                overrides[bool_key] = parse_bool(
+                    overrides[bool_key], f"{base}.{bool_key}"
+                )
 
 
 class ConfigManager:
@@ -514,11 +942,20 @@ class ConfigManager:
         # 尝试加载YAML配置文件
         if Path(self.config_path).exists():
             try:
+                if yaml is None:
+                    raise ConfigError("config: 缺少 PyYAML，无法读取配置文件")
                 with open(self.config_path, 'r', encoding='utf-8') as f:
                     config_data = yaml.safe_load(f) or {}
+                if not isinstance(config_data, dict):
+                    raise _config_error("config", "根节点必须是对象映射", config_data)
+                config_data = self._resolve_config_tree(config_data)
                 logging.info(f"✅ 已加载配置文件: {self.config_path}")
+            except ConfigError:
+                raise
             except Exception as e:
-                logging.warning(f"⚠️ 配置文件加载失败: {e}")
+                raise ConfigError(
+                    f"config: 配置文件读取或 YAML 解析失败，当前值={e}"
+                ) from e
 
         # 从环境变量获取配置（优先级最高）
         config = WeReadConfig(
@@ -528,10 +965,10 @@ class ConfigManager:
             startup_delay=self._get_config_value(
                 config_data, "app.startup_delay", "STARTUP_DELAY", "1-10"
             ),
-            max_concurrent_users=int(self._get_config_value(
+            max_concurrent_users=parse_int(self._get_config_value(
                 config_data, "app.max_concurrent_users",
                 "MAX_CONCURRENT_USERS", "1"
-            )),
+            ), "app.max_concurrent_users", 1),
             curl_file_path=self._get_config_value(
                 config_data, "curl_config.file_path",
                 "WEREAD_CURL_BASH_FILE_PATH", ""
@@ -563,37 +1000,41 @@ class ConfigManager:
                 config_data, "reading.fallback_to_config",
                 "FALLBACK_TO_CONFIG", True
             ),
+            max_consecutive_failures=parse_int(self._get_config_value(
+                config_data, "reading.max_consecutive_failures",
+                "MAX_CONSECUTIVE_FAILURES", "5"
+            ), "reading.max_consecutive_failures", 1),
             books=self._load_books(config_data),
             smart_random=SmartRandomConfig(
-                book_continuity=float(self._get_config_value(
+                book_continuity=parse_float(self._get_config_value(
                     config_data, "reading.smart_random.book_continuity",
                     "BOOK_CONTINUITY", "0.8"
-                )),
-                chapter_continuity=float(self._get_config_value(
+                ), "reading.smart_random.book_continuity", 0, 1),
+                chapter_continuity=parse_float(self._get_config_value(
                     config_data, "reading.smart_random.chapter_continuity",
                     "CHAPTER_CONTINUITY", "0.7"
-                )),
-                book_switch_cooldown=int(self._get_config_value(
+                ), "reading.smart_random.chapter_continuity", 0, 1),
+                book_switch_cooldown=parse_int(self._get_config_value(
                     config_data, "reading.smart_random.book_switch_cooldown",
                     "BOOK_SWITCH_COOLDOWN", "300"
-                )),
+                ), "reading.smart_random.book_switch_cooldown", 0),
             ),
         )
 
         # 加载网络配置
         config.network = NetworkConfig(
-            timeout=int(self._get_config_value(
+            timeout=parse_int(self._get_config_value(
                 config_data, "network.timeout", "NETWORK_TIMEOUT", "30"
-            )),
-            retry_times=int(self._get_config_value(
+            ), "network.timeout", 1),
+            retry_times=parse_int(self._get_config_value(
                 config_data, "network.retry_times", "RETRY_TIMES", "3"
-            )),
+            ), "network.retry_times", 1),
             retry_delay=self._get_config_value(
                 config_data, "network.retry_delay", "RETRY_DELAY", "5-15"
             ),
-            rate_limit=int(self._get_config_value(
+            rate_limit=parse_int(self._get_config_value(
                 config_data, "network.rate_limit", "RATE_LIMIT", "10"
-            )),
+            ), "network.rate_limit", 0),
         )
 
         # 加载人类行为模拟配置
@@ -606,10 +1047,10 @@ class ConfigManager:
                 config_data, "human_simulation.reading_speed_variation",
                 "READING_SPEED_VARIATION", True
             ),
-            break_probability=float(self._get_config_value(
+            break_probability=parse_float(self._get_config_value(
                 config_data, "human_simulation.break_probability",
                 "BREAK_PROBABILITY", "0.1"
-            )),
+            ), "human_simulation.break_probability", 0, 1),
             break_duration=self._get_config_value(
                 config_data, "human_simulation.break_duration",
                 "BREAK_DURATION", "10-20"
@@ -676,10 +1117,10 @@ class ConfigManager:
                 config_data, "daemon.session_interval",
                 "SESSION_INTERVAL", "120-180"
             ),
-            max_daily_sessions=int(self._get_config_value(
+            max_daily_sessions=parse_int(self._get_config_value(
                 config_data, "daemon.max_daily_sessions",
                 "MAX_DAILY_SESSIONS", "12"
-            )),
+            ), "daemon.max_daily_sessions", 1),
         )
 
         # 加载日志配置
@@ -696,9 +1137,9 @@ class ConfigManager:
             max_size=self._get_config_value(
                 config_data, "logging.max_size", "LOG_MAX_SIZE", "10MB"
             ),
-            backup_count=int(self._get_config_value(
+            backup_count=parse_int(self._get_config_value(
                 config_data, "logging.backup_count", "LOG_BACKUP_COUNT", "5"
-            )),
+            ), "logging.backup_count", 0),
             console=self._get_bool_config(
                 config_data, "logging.console", "LOG_CONSOLE", True
             ),
@@ -712,10 +1153,10 @@ class ConfigManager:
                 config_data, "history.file", "HISTORY_FILE",
                 "logs/run-history.json"
             ),
-            max_entries=max(1, int(self._get_config_value(
+            max_entries=parse_int(self._get_config_value(
                 config_data, "history.max_entries", "HISTORY_MAX_ENTRIES",
                 "50"
-            ))),
+            ), "history.max_entries", 1),
             persist_runtime_error=self._get_bool_config(
                 config_data,
                 "history.persist_runtime_error",
@@ -724,7 +1165,7 @@ class ConfigManager:
             ),
         )
 
-        config.max_concurrent_users = max(1, config.max_concurrent_users)
+        validate_config_semantics(config)
         return config
 
     def _load_books(self, config_data: dict) -> List[BookInfo]:
@@ -755,7 +1196,9 @@ class ConfigManager:
                             elif isinstance(chapter_item, dict):
                                 # 格式：包含章节ID和可选的索引
                                 chapter_id = chapter_item.get("chapter_id") or chapter_item.get("id")
-                                chapter_index = chapter_item.get("chapter_index") or chapter_item.get("index")
+                                chapter_index = chapter_item.get("chapter_index")
+                                if chapter_index is None:
+                                    chapter_index = chapter_item.get("index")
                                 
                                 if chapter_id:
                                     chapters.append(chapter_id)  # 保持向后兼容
@@ -802,7 +1245,9 @@ class ConfigManager:
                     logging.warning(f"⚠️ 未知通知事件: {key}")
                     continue
 
-                triggers[event] = bool(value)
+                triggers[event] = parse_bool(
+                    value, f"notification.triggers.{key}"
+                )
 
         return triggers
 
@@ -816,28 +1261,22 @@ class ConfigManager:
         if value is None:
             return None
 
-        if isinstance(value, bool):
-            return value
-
-        if isinstance(value, str):
-            return value.lower() in ('true', '1', 'yes', 'on')
-
-        return None
+        return parse_bool(value, yaml_path)
 
     def _get_config_value(self, config_data: dict, yaml_path: str,
                           env_key: str, default: Any) -> Any:
         """获取配置值，优先级：环境变量 > YAML > 默认值"""
         # 先检查环境变量
         env_value = os.getenv(env_key)
-        if env_value:
+        if env_value is not None:
             # 处理环境变量中的占位符
-            env_value = self._resolve_env_placeholders(env_value)
+            env_value = self._resolve_env_placeholders(env_value, yaml_path)
             return self._parse_config_value(env_value, type(default))
 
         # 再检查YAML配置
         yaml_value = self._get_nested_dict_value(config_data, yaml_path)
         if yaml_value is not None:
-            yaml_value = self._resolve_env_placeholders(str(yaml_value))
+            yaml_value = self._resolve_env_placeholders(yaml_value, yaml_path)
             return self._parse_config_value(yaml_value, type(default))
 
         return default
@@ -846,13 +1285,9 @@ class ConfigManager:
                          env_key: str, default: bool) -> bool:
         """获取布尔类型配置值"""
         value = self._get_config_value(
-            config_data, yaml_path, env_key, str(default)
+            config_data, yaml_path, env_key, default
         )
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.lower() in ('true', '1', 'yes', 'on')
-        return default
+        return parse_bool(value, yaml_path)
 
     def _get_nested_dict_value(self, data: dict, path: str) -> Any:
         """从嵌套字典中获取值"""
@@ -865,16 +1300,37 @@ class ConfigManager:
                 return None
         return current
 
-    def _resolve_env_placeholders(self, value: str) -> str:
+    def _resolve_env_placeholders(self, value: Any, path: str) -> Any:
         """解析环境变量占位符"""
+        if not isinstance(value, str):
+            return value
         import re
         pattern = r'\$\{([^}]+)\}'
 
         def replace_match(match):
             env_var = match.group(1)
-            return os.getenv(env_var, match.group(0))
+            resolved = os.getenv(env_var)
+            if resolved is None:
+                raise _config_error(path, f"环境变量 {env_var} 未设置", value)
+            return resolved
 
         return re.sub(pattern, replace_match, value)
+
+    def _resolve_config_tree(self, value: Any, path: str = "") -> Any:
+        """递归解析 YAML 中任意位置的环境变量占位符。"""
+        if isinstance(value, dict):
+            return {
+                key: self._resolve_config_tree(
+                    item, f"{path}.{key}" if path else str(key)
+                )
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [
+                self._resolve_config_tree(item, f"{path}[{index}]")
+                for index, item in enumerate(value)
+            ]
+        return self._resolve_env_placeholders(value, path or "config")
 
     def _parse_config_value(self, value: str, target_type: type) -> Any:
         """解析配置值为指定类型"""
@@ -922,258 +1378,64 @@ class ConfigManager:
 
         return channels
 
-    def _apply_env_overrides_to_channel(self, channel_name: str,
-                                         base_config: dict) -> dict:
-        """应用环境变量覆盖到通道配置"""
-        config = base_config.copy()
-        
-        if channel_name == "pushplus":
-            if os.getenv("PUSHPLUS_TOKEN"):
-                config["token"] = os.getenv("PUSHPLUS_TOKEN")
-        
-        elif channel_name == "telegram":
-            if os.getenv("TELEGRAM_BOT_TOKEN"):
-                config["bot_token"] = os.getenv("TELEGRAM_BOT_TOKEN")
-            if os.getenv("TELEGRAM_CHAT_ID"):
-                config["chat_id"] = os.getenv("TELEGRAM_CHAT_ID")
-            
-            # 代理配置
-            proxy_config = config.get("proxy", {})
+    def _apply_env_overrides_to_channel(
+        self, channel_name: str, base_config: dict
+    ) -> dict:
+        """按通道字段表应用环境变量覆盖。"""
+        config = dict(base_config or {})
+        field_mapping = NOTIFICATION_CHANNEL_ENV_FIELDS.get(
+            channel_name, {}
+        )
+        for field_name, env_name in field_mapping.items():
+            env_value = os.getenv(env_name)
+            if env_value is None:
+                continue
+            if channel_name == "gotify" and field_name == "priority":
+                config[field_name] = parse_int(
+                    env_value,
+                    "notification.channels.gotify.config.priority",
+                )
+            else:
+                config[field_name] = env_value
+
+        if channel_name == "telegram":
+            proxy_config = dict(config.get("proxy") or {})
             if os.getenv("HTTP_PROXY"):
                 proxy_config["http"] = os.getenv("HTTP_PROXY")
             if os.getenv("HTTPS_PROXY"):
                 proxy_config["https"] = os.getenv("HTTPS_PROXY")
             if proxy_config:
                 config["proxy"] = proxy_config
-        
-        elif channel_name == "wxpusher":
-            if os.getenv("WXPUSHER_SPT"):
-                config["spt"] = os.getenv("WXPUSHER_SPT")
-        
-        elif channel_name == "apprise":
-            if os.getenv("APPRISE_URL"):
-                config["url"] = os.getenv("APPRISE_URL")
-        
-        elif channel_name == "bark":
-            if os.getenv("BARK_SERVER"):
-                config["server"] = os.getenv("BARK_SERVER")
-            if os.getenv("BARK_DEVICE_KEY"):
-                config["device_key"] = os.getenv("BARK_DEVICE_KEY")
-            if os.getenv("BARK_SOUND"):
-                config["sound"] = os.getenv("BARK_SOUND")
-        
-        elif channel_name == "ntfy":
-            if os.getenv("NTFY_SERVER"):
-                config["server"] = os.getenv("NTFY_SERVER")
-            if os.getenv("NTFY_TOPIC"):
-                config["topic"] = os.getenv("NTFY_TOPIC")
-            if os.getenv("NTFY_TOKEN"):
-                config["token"] = os.getenv("NTFY_TOKEN")
-        
-        elif channel_name == "feishu":
-            if os.getenv("FEISHU_WEBHOOK_URL"):
-                config["webhook_url"] = os.getenv("FEISHU_WEBHOOK_URL")
-            if os.getenv("FEISHU_MSG_TYPE"):
-                config["msg_type"] = os.getenv("FEISHU_MSG_TYPE")
-        
-        elif channel_name == "wework":
-            if os.getenv("WEWORK_WEBHOOK_URL"):
-                config["webhook_url"] = os.getenv("WEWORK_WEBHOOK_URL")
-            if os.getenv("WEWORK_MSG_TYPE"):
-                config["msg_type"] = os.getenv("WEWORK_MSG_TYPE")
-        
-        elif channel_name == "dingtalk":
-            if os.getenv("DINGTALK_WEBHOOK_URL"):
-                config["webhook_url"] = os.getenv("DINGTALK_WEBHOOK_URL")
-            if os.getenv("DINGTALK_MSG_TYPE"):
-                config["msg_type"] = os.getenv("DINGTALK_MSG_TYPE")
-        
-        elif channel_name == "gotify":
-            if os.getenv("GOTIFY_SERVER"):
-                config["server"] = os.getenv("GOTIFY_SERVER")
-            if os.getenv("GOTIFY_TOKEN"):
-                config["token"] = os.getenv("GOTIFY_TOKEN")
-            if os.getenv("GOTIFY_PRIORITY"):
-                config["priority"] = int(os.getenv("GOTIFY_PRIORITY"))
-            if os.getenv("GOTIFY_TITLE"):
-                config["title"] = os.getenv("GOTIFY_TITLE")
-        
+
         return config
 
     def _create_channels_from_env_vars(self) -> List[NotificationChannel]:
-        """从环境变量自动创建通知通道"""
+        """从字段表创建环境变量配置完整的通知通道。"""
         channels = []
-        
-        # PushPlus
-        if os.getenv("PUSHPLUS_TOKEN"):
-            channels.append(NotificationChannel(
-                name="pushplus",
-                enabled=True,
-                config={"token": os.getenv("PUSHPLUS_TOKEN")}
-            ))
-        
-        # Telegram
-        if os.getenv("TELEGRAM_BOT_TOKEN") and os.getenv("TELEGRAM_CHAT_ID"):
-            telegram_config = {
-                "bot_token": os.getenv("TELEGRAM_BOT_TOKEN"),
-                "chat_id": os.getenv("TELEGRAM_CHAT_ID")
-            }
-            # 添加代理配置
-            proxy_config = {}
-            if os.getenv("HTTP_PROXY"):
-                proxy_config["http"] = os.getenv("HTTP_PROXY")
-            if os.getenv("HTTPS_PROXY"):
-                proxy_config["https"] = os.getenv("HTTPS_PROXY")
-            if proxy_config:
-                telegram_config["proxy"] = proxy_config
-            
-            channels.append(NotificationChannel(
-                name="telegram",
-                enabled=True,
-                config=telegram_config
-            ))
-        
-        # WxPusher
-        if os.getenv("WXPUSHER_SPT"):
-            channels.append(NotificationChannel(
-                name="wxpusher",
-                enabled=True,
-                config={"spt": os.getenv("WXPUSHER_SPT")}
-            ))
-        
-        # Apprise
-        if os.getenv("APPRISE_URL"):
-            channels.append(NotificationChannel(
-                name="apprise",
-                enabled=True,
-                config={"url": os.getenv("APPRISE_URL")}
-            ))
-        
-        # Bark
-        if os.getenv("BARK_SERVER") and os.getenv("BARK_DEVICE_KEY"):
-            bark_config = {
-                "server": os.getenv("BARK_SERVER"),
-                "device_key": os.getenv("BARK_DEVICE_KEY")
-            }
-            if os.getenv("BARK_SOUND"):
-                bark_config["sound"] = os.getenv("BARK_SOUND")
-            
-            channels.append(NotificationChannel(
-                name="bark",
-                enabled=True,
-                config=bark_config
-            ))
-        
-        # Ntfy
-        if os.getenv("NTFY_SERVER") and os.getenv("NTFY_TOPIC"):
-            ntfy_config = {
-                "server": os.getenv("NTFY_SERVER"),
-                "topic": os.getenv("NTFY_TOPIC")
-            }
-            if os.getenv("NTFY_TOKEN"):
-                ntfy_config["token"] = os.getenv("NTFY_TOKEN")
-            
-            channels.append(NotificationChannel(
-                name="ntfy",
-                enabled=True,
-                config=ntfy_config
-            ))
-        
-        # 飞书
-        if os.getenv("FEISHU_WEBHOOK_URL"):
-            feishu_config = {
-                "webhook_url": os.getenv("FEISHU_WEBHOOK_URL")
-            }
-            if os.getenv("FEISHU_MSG_TYPE"):
-                feishu_config["msg_type"] = os.getenv("FEISHU_MSG_TYPE")
-            
-            channels.append(NotificationChannel(
-                name="feishu",
-                enabled=True,
-                config=feishu_config
-            ))
-        
-        # 企业微信
-        if os.getenv("WEWORK_WEBHOOK_URL"):
-            wework_config = {
-                "webhook_url": os.getenv("WEWORK_WEBHOOK_URL")
-            }
-            if os.getenv("WEWORK_MSG_TYPE"):
-                wework_config["msg_type"] = os.getenv("WEWORK_MSG_TYPE")
-            
-            channels.append(NotificationChannel(
-                name="wework",
-                enabled=True,
-                config=wework_config
-            ))
-        
-        # 钉钉
-        if os.getenv("DINGTALK_WEBHOOK_URL"):
-            dingtalk_config = {
-                "webhook_url": os.getenv("DINGTALK_WEBHOOK_URL")
-            }
-            if os.getenv("DINGTALK_MSG_TYPE"):
-                dingtalk_config["msg_type"] = os.getenv("DINGTALK_MSG_TYPE")
-            
-            channels.append(NotificationChannel(
-                name="dingtalk",
-                enabled=True,
-                config=dingtalk_config
-            ))
-        
-        # Gotify
-        if os.getenv("GOTIFY_SERVER") and os.getenv("GOTIFY_TOKEN"):
-            gotify_config = {
-                "server": os.getenv("GOTIFY_SERVER"),
-                "token": os.getenv("GOTIFY_TOKEN")
-            }
-            if os.getenv("GOTIFY_PRIORITY"):
-                gotify_config["priority"] = int(os.getenv("GOTIFY_PRIORITY"))
-            if os.getenv("GOTIFY_TITLE"):
-                gotify_config["title"] = os.getenv("GOTIFY_TITLE")
-            
-            channels.append(NotificationChannel(
-                name="gotify",
-                enabled=True,
-                config=gotify_config
-            ))
-
-        # Server酱³
-        if os.getenv("SERVERCHAN3_UID") and os.getenv("SERVERCHAN3_SENDKEY"):
-            serverchan3_config = {
-                "uid": os.getenv("SERVERCHAN3_UID"),
-                "sendkey": os.getenv("SERVERCHAN3_SENDKEY")
-            }
-            if os.getenv("SERVERCHAN3_TAGS"):
-                serverchan3_config["tags"] = os.getenv("SERVERCHAN3_TAGS")
-            if os.getenv("SERVERCHAN3_SHORT"):
-                serverchan3_config["short"] = os.getenv("SERVERCHAN3_SHORT")
-
-            channels.append(NotificationChannel(
-                name="serverchan3",
-                enabled=True,
-                config=serverchan3_config
-            ))
-
-        # PushDeer
-        if os.getenv("PUSHDEER_PUSHKEY"):
-            pushdeer_config = {
-                "pushkey": os.getenv("PUSHDEER_PUSHKEY")
-            }
-            if os.getenv("PUSHDEER_TYPE"):
-                pushdeer_config["type"] = os.getenv("PUSHDEER_TYPE")
-
-            channels.append(NotificationChannel(
-                name="pushdeer",
-                enabled=True,
-                config=pushdeer_config
-            ))
+        for channel_name in NOTIFICATION_CHANNEL_ENV_FIELDS:
+            channel_config = self._apply_env_overrides_to_channel(
+                channel_name, {}
+            )
+            required_fields = NOTIFICATION_CHANNEL_REQUIRED_FIELDS.get(
+                channel_name, []
+            )
+            if required_fields and all(
+                channel_config.get(field_name)
+                for field_name in required_fields
+            ):
+                channels.append(
+                    NotificationChannel(
+                        name=channel_name,
+                        enabled=True,
+                        config=channel_config,
+                    )
+                )
 
         if channels:
-            logging.info(f"✅ 从环境变量自动创建了 {len(channels)} 个通知通道")
-
+            logging.info(
+                "✅ 从环境变量自动创建了 %s 个通知通道", len(channels)
+            )
         return channels
-
     def _load_user_configs(self, config_data: dict) -> List[UserConfig]:
         """加载用户配置"""
         users = []
@@ -1182,15 +1444,19 @@ class ConfigManager:
             config_data, "curl_config.users"
         )
         if users_config and isinstance(users_config, list):
-            for user_data in users_config:
+            for index, user_data in enumerate(users_config):
                 if isinstance(user_data, dict) and user_data.get("name"):
+                    cookie_refresh_ql = user_data.get("cookie_refresh_ql")
+                    if cookie_refresh_ql is not None:
+                        cookie_refresh_ql = parse_bool(
+                            cookie_refresh_ql,
+                            f"curl_config.users[{index}].cookie_refresh_ql",
+                        )
                     user = UserConfig(
                         name=user_data.get("name"),
                         file_path=user_data.get("file_path", ""),
                         content=user_data.get("content", ""),
-                        cookie_refresh_ql=user_data.get(
-                            "cookie_refresh_ql"
-                        ),
+                        cookie_refresh_ql=cookie_refresh_ql,
                         reading_overrides=user_data.get(
                             "reading_overrides", {}
                         )
@@ -1263,6 +1529,42 @@ class RandomHelper:
         return int(RandomHelper.get_random_from_range(range_str))
 
 
+async def interruptible_sleep(
+    seconds: float, is_cancelled: Callable[[], bool]
+) -> bool:
+    """分段休眠；取消时返回 False，完整休眠返回 True。"""
+    remaining = max(0.0, float(seconds))
+    while remaining > 0:
+        if is_cancelled():
+            return False
+        step = min(remaining, 1.0)
+        await asyncio.sleep(step)
+        remaining -= step
+    return not is_cancelled()
+
+
+def is_successful_read_response(response_data: Dict[str, Any]) -> bool:
+    """仅接受同时包含真值 succ 和非空 synckey 的响应。"""
+    return bool(response_data.get("succ")) and bool(
+        response_data.get("synckey")
+    )
+
+
+def load_curl_source(
+    file_path: str, inline_content: str, path: str
+) -> str:
+    """按文件优先、内嵌内容回退的规则读取 CURL。"""
+    if file_path and Path(file_path).exists():
+        try:
+            return Path(file_path).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError(
+                f"{path}.file_path: CURL 文件无法读取，"
+                f"当前值={file_path!r}"
+            ) from exc
+    return str(inline_content or "").strip()
+
+
 class RateLimiter:
     """简单的异步速率限制器，按请求/分钟限制"""
 
@@ -1321,7 +1623,10 @@ class CurlParser:
 
             try:
                 request_data = json.loads(raw_payload)
-                logging.debug(f"✅ 从CURL命令提取到请求数据: {request_data}")
+                logging.debug(
+                    "从 CURL 提取请求字段: %s",
+                    ", ".join(sorted(request_data.keys())),
+                )
                 return request_data
             except json.JSONDecodeError as e:
                 logging.warning(f"⚠️ 解析请求数据JSON失败: {e}")
@@ -1408,7 +1713,9 @@ class CurlParser:
             if len(skey_value) < 8:
                 errors.append(f"wr_skey 长度异常: {len(skey_value)} 字符，可能无效")
             else:
-                warnings.append(f"wr_skey 验证通过: {skey_value[:8]}***")
+                warnings.append(
+                    f"wr_skey 验证通过: {_secret_marker(skey_value)}"
+                )
 
         # 3. 验证 User-Agent
         user_agent = CurlParser._get_header_case_insensitive(
@@ -1432,9 +1739,13 @@ class CurlParser:
             if field in request_data:
                 value = str(request_data[field])
                 if len(value) < 4:
-                    errors.append(f"字段 {field} 长度异常: {value}")
+                    errors.append(
+                        f"字段 {field} 长度异常: {len(value)} 字符"
+                    )
                 else:
-                    warnings.append(f"字段 {field} 验证通过: {value[:8]}***")
+                    warnings.append(
+                        f"字段 {field} 验证通过: {_secret_marker(value)}"
+                    )
 
         # 6. 验证书籍和章节字段（如果存在）
         if 'b' in request_data and 'c' in request_data:
@@ -1575,7 +1886,7 @@ class HttpClient:
         last_error = None
 
         for attempt in range(attempts):
-            start_time = time.time()
+            start_time = time.monotonic()
             try:
                 await self._rate_limiter.acquire()
                 response = await self._client.post(
@@ -1586,29 +1897,38 @@ class HttpClient:
                     data=data
                 )
                 response.raise_for_status()
-                elapsed = time.time() - start_time
+                elapsed = time.monotonic() - start_time
                 self.request_times.append(elapsed)
                 return response, elapsed
             except Exception as exc:
-                elapsed = time.time() - start_time
+                elapsed = time.monotonic() - start_time
                 self.request_times.append(elapsed)
                 last_error = exc
+                delay = 0.0
                 if attempt < attempts - 1:
                     delay = RandomHelper.get_random_from_range(
                         self.config.retry_delay
                     )
-                    await asyncio.sleep(delay)
-                else:
-                    break
+                category = classify_runtime_error(exc).value
+                logging.warning(
+                    "HTTP 请求失败: url=%s attempt=%s/%s next_delay=%.2fs",
+                    safe_url_for_log(url),
+                    attempt + 1,
+                    attempts,
+                    delay,
+                    extra={
+                        "event": "http_retry",
+                        "attempt": attempt + 1,
+                        "max_attempts": attempts,
+                        "delay": delay,
+                        "error_category": category,
+                        "elapsed_ms": int(elapsed * 1000),
+                    },
+                )
+                if attempt < attempts - 1:
+                    await interruptible_sleep(delay, lambda: False)
 
         raise last_error if last_error else RuntimeError("请求失败")
-
-    def get_average_response_time(self) -> float:
-        """获取平均响应时间"""
-        if self.request_times:
-            return sum(self.request_times) / len(self.request_times)
-        return 0.0
-
 
 class UserAgentRotator:
     """User-Agent轮换器"""
@@ -1686,7 +2006,9 @@ class SmartReadingManager:
         self.current_book_chapters = chapter_list
         if chapter_index is None and chapter_id in chapter_list:
             chapter_index = chapter_list.index(chapter_id)
-        self.current_chapter_index = chapter_index or 0
+        self.current_chapter_index = (
+            chapter_index if chapter_index is not None else 0
+        )
         self.current_chapter_ci = self.get_chapter_index(chapter_id, curl_ci)
 
     def get_chapter_index(self, chapter_id: str, curl_ci: Optional[int] = None) -> Optional[int]:
@@ -1862,14 +2184,16 @@ class SmartReadingManager:
         if should_skip_chapter:
             # 随机选择当前书籍的其他章节
             if len(self.current_book_chapters) > 1:
-                self.current_chapter_index = random.randint(
+                next_index = random.randint(
                     0, len(self.current_book_chapters) - 1
                 )
-                self.current_chapter_id = self.current_book_chapters[
-                    self.current_chapter_index
-                ]
-                # 更新章节索引
-                self.current_chapter_ci = self.get_chapter_index(self.current_chapter_id)
+                next_chapter = self.current_book_chapters[next_index]
+                self._set_current_position(
+                    self.current_book_id,
+                    next_chapter,
+                    self.current_book_chapters,
+                    chapter_index=next_index,
+                )
                 logging.info(f"📄 智能跳章节: {self.current_chapter_id}, "
                            f"索引 {self.current_chapter_ci if self.current_chapter_ci is not None else 'N/A'}")
             else:
@@ -1898,9 +2222,12 @@ class SmartReadingManager:
         chapters = self.book_chapters_map[book_id]
         chapter_id = random.choice(chapters)
 
-        self.current_book_id = book_id
-        self.current_chapter_id = chapter_id
-        self.current_book_chapters = chapters
+        self._set_current_position(
+            book_id,
+            chapter_id,
+            chapters,
+            chapter_index=chapters.index(chapter_id),
+        )
 
         return book_id, chapter_id
 
@@ -1935,11 +2262,15 @@ class SmartReadingManager:
             next_book_name = self.book_names_map.get(next_book_id, "未知书籍")
             logging.info(f"📚 顺序换书: 《{next_book_name}》")
         else:
-            self.current_chapter_id = self.current_book_chapters[
+            next_chapter = self.current_book_chapters[
                 self.current_chapter_index
             ]
-            # 更新章节索引
-            self.current_chapter_ci = self.get_chapter_index(self.current_chapter_id)
+            self._set_current_position(
+                self.current_book_id,
+                next_chapter,
+                self.current_book_chapters,
+                chapter_index=self.current_chapter_index,
+            )
 
 
 class HumanBehaviorSimulator:
@@ -2046,7 +2377,7 @@ class NotificationService:
                         channel.name,
                         "失败",
                         classify_runtime_error(e),
-                        str(e),
+                        type(e).__name__,
                     )
                 )
 
@@ -2114,7 +2445,11 @@ class NotificationService:
                 logging.warning(f"⚠️ 未知的通知通道: {channel.name}")
                 return False
         except Exception as e:
-            logging.error(f"❌ 通道 {channel.name} 通知发送失败: {e}")
+            logging.error(
+                "❌ 通道 %s 通知发送失败: %s",
+                channel.name,
+                type(e).__name__,
+            )
             return False
 
     def _send_pushplus(self, message: str, config: Dict[str, Any]) -> bool:
@@ -2172,7 +2507,7 @@ class NotificationService:
             logging.info("✅ WxPusher通知发送成功")
             return True
         except Exception as e:
-            logging.error(f"❌ WxPusher通知发送失败: {e}")
+            logging.error("❌ WxPusher通知发送失败: %s", type(e).__name__)
             return False
 
     def _post_json_notification(
@@ -2217,7 +2552,7 @@ class NotificationService:
             except Exception as e:
                 logging.error(
                     f"❌ {service_name}通知发送失败 "
-                    f"(尝试 {attempt + 1}/{max_retries}): {e}"
+                    f"(尝试 {attempt + 1}/{max_retries}): {type(e).__name__}"
                 )
                 if attempt < max_retries - 1:
                     time.sleep(random.randint(5, 15))
@@ -2272,7 +2607,7 @@ class NotificationService:
                 return False
 
         except Exception as e:
-            logging.error(f"❌ Apprise通知发送失败: {e}")
+            logging.error("❌ Apprise通知发送失败: %s", type(e).__name__)
             return False
 
     def _send_bark(self, message: str, config: Dict[str, Any]) -> bool:
@@ -2331,7 +2666,7 @@ class NotificationService:
             return True
 
         except Exception as e:
-            logging.error(f"❌ Ntfy通知发送失败: {e}")
+            logging.error("❌ Ntfy通知发送失败: %s", type(e).__name__)
             return False
 
     def _send_feishu(self, message: str, config: Dict[str, Any]) -> bool:
@@ -2528,14 +2863,16 @@ class WeReadApplication:
     """微信读书应用程序管理器"""
 
     _instance = None
-    _shutdown_requested = False
     _current_session_managers: Set["WeReadSessionManager"] = set()
     _daily_session_count = 0
     _last_session_date = None
     _last_run_summary: Dict[str, Any] = {}
 
-    def __init__(self, config: WeReadConfig):
+    def __init__(self, config: WeReadConfig, execution_type: str = "normal"):
         self.config = config
+        self.execution_type = execution_type
+        self.shutdown_signal = None
+        self._shutdown_event = asyncio.Event()
         WeReadApplication._instance = self
 
         # 设置信号处理
@@ -2564,61 +2901,49 @@ class WeReadApplication:
 
     def _signal_handler(self, signum, frame):
         """信号处理器"""
-        startup_mode = StartupMode(self.config.startup_mode.lower())
+        logging.info(f"📡 收到信号 {signum}，准备优雅关闭...")
+        self.shutdown_signal = signum
+        self._shutdown_event.set()
 
-        if startup_mode == StartupMode.IMMEDIATE:
-            # immediate模式下立即退出
-            logging.info(f"📡 收到信号 {signum}，立即退出")
-            import sys
-            sys.exit(0)
-        else:
-            # 其他模式优雅关闭
-            logging.info(f"📡 收到信号 {signum}，准备优雅关闭...")
-            WeReadApplication._shutdown_requested = True
+    def is_shutdown_requested(self) -> bool:
+        """返回当前应用实例是否收到关闭请求。"""
+        return self._shutdown_event.is_set()
 
-            # 如果当前有会话在运行，尝试等待其完成
-            if WeReadApplication._current_session_managers:
-                logging.info(
-                    f"⏳ 正在等待 {len(WeReadApplication._current_session_managers)} 个会话完成..."
-                )
-                # 这里可以添加更复杂的会话中断逻辑
-
-    async def run(self):
+    async def run(self) -> RunResult:
         """根据配置的启动模式运行应用程序"""
         startup_mode = StartupMode(self.config.startup_mode.lower())
 
         if startup_mode == StartupMode.IMMEDIATE:
-            await self._run_immediate_mode()
+            return await self._run_immediate_mode()
         elif startup_mode == StartupMode.SCHEDULED:
-            await self._run_scheduled_mode()
+            return await self._run_scheduled_mode()
         elif startup_mode == StartupMode.DAEMON:
-            await self._run_daemon_mode()
+            return await self._run_daemon_mode()
         else:
             raise ValueError(f"未知的启动模式: {self.config.startup_mode}")
 
-    async def _run_immediate_mode(self):
+    async def _run_immediate_mode(self) -> RunResult:
         """立即执行模式"""
         logging.info("🚀 启动模式: 立即执行")
-        await self.run_single_session()
+        return await self.run_single_session()
 
     async def _run_scheduled_mode(self):
         """定时执行模式"""
         logging.info("🚀 启动模式: 定时执行")
 
         if croniter is None:
-            logging.error("❌ 缺少依赖 croniter，无法执行定时模式")
-            return
+            raise RuntimeError("缺少依赖 croniter，无法执行定时模式")
 
         if not self.config.schedule.enabled:
-            logging.error("❌ 定时模式已启用，但schedule配置未启用")
-            return
+            raise ConfigError("schedule.enabled: scheduled 模式下必须为 true")
 
         timezone_name = self.config.schedule.timezone or "Asia/Shanghai"
         try:
             tz = ZoneInfo(timezone_name)
         except Exception:
-            logging.error(f"❌ 无效的时区配置: {timezone_name}")
-            return
+            raise ConfigError(
+                f"schedule.timezone: 无效时区，当前值={timezone_name!r}"
+            )
 
         try:
             cron_iter = croniter(
@@ -2626,14 +2951,19 @@ class WeReadApplication:
                 datetime.now(tz)
             )
         except Exception as e:
-            logging.error(f"❌ 无效的cron表达式: {e}")
-            return
+            raise ConfigError(
+                "schedule.cron_expression: 无效 cron 表达式，"
+                f"当前值={self.config.schedule.cron_expression!r}"
+            ) from e
 
         logging.info(
             f"⏰ 定时任务已启动 (时区 {timezone_name})，表达式: {self.config.schedule.cron_expression}"
         )
 
-        while not WeReadApplication._shutdown_requested:
+        last_result = RunResult(
+            final_status="cancelled", user_count=0, cancelled_users=0
+        )
+        while not self.is_shutdown_requested():
             next_run = cron_iter.get_next(datetime)
             if next_run.tzinfo is None:
                 next_run = next_run.replace(tzinfo=tz)
@@ -2647,27 +2977,35 @@ class WeReadApplication:
                 f"🗓️ 下一次执行时间: {next_run.astimezone(tz).strftime('%Y-%m-%d %H:%M:%S %Z')}"
             )
 
-            while wait_seconds > 0 and not WeReadApplication._shutdown_requested:
-                await asyncio.sleep(min(wait_seconds, 1))
+            while wait_seconds > 0 and not self.is_shutdown_requested():
+                await interruptible_sleep(
+                    min(wait_seconds, 1),
+                    self.is_shutdown_requested,
+                )
                 now = datetime.now(tz)
                 wait_seconds = (next_run - now).total_seconds()
 
-            if WeReadApplication._shutdown_requested:
+            if self.is_shutdown_requested():
                 break
 
-            await self.run_single_session()
+            last_result = await self.run_single_session()
+            if last_result.final_status != "success":
+                logging.warning("本次失败，常驻进程继续等待下一次执行")
 
         logging.info("👋 定时任务已停止")
+        return last_result
 
     async def _run_daemon_mode(self):
         """守护进程模式"""
         logging.info("🚀 启动模式: 守护进程")
 
         if not self.config.daemon.enabled:
-            logging.error("❌ 守护进程模式已启用，但daemon配置未启用")
-            return
+            raise ConfigError("daemon.enabled: daemon 模式下必须为 true")
 
-        while not WeReadApplication._shutdown_requested:
+        last_result = RunResult(
+            final_status="cancelled", user_count=0, cancelled_users=0
+        )
+        while not self.is_shutdown_requested():
             # 检查每日会话限制
             current_date = datetime.now().date()
             if WeReadApplication._last_session_date != current_date:
@@ -2686,11 +3024,16 @@ class WeReadApplication:
 
             # 执行阅读会话
             try:
-                await self.run_single_session()
+                last_result = await self.run_single_session()
                 WeReadApplication._daily_session_count += 1
 
+                if last_result.final_status == "cancelled":
+                    break
+                if last_result.final_status != "success":
+                    logging.warning("本次失败，常驻进程继续")
+
                 # 如果没有请求关闭，等待下一次会话
-                if not WeReadApplication._shutdown_requested:
+                if not self.is_shutdown_requested():
                     interval_minutes = RandomHelper.get_random_int_from_range(
                         self.config.daemon.session_interval
                     )
@@ -2698,18 +3041,17 @@ class WeReadApplication:
                         f"😴 守护进程等待 {interval_minutes} 分钟后执行下一次会话..."
                     )
 
-                    # 分段等待，以便能够响应关闭信号
-                    for _ in range(interval_minutes * 60):
-                        if WeReadApplication._shutdown_requested:
-                            break
-                        await asyncio.sleep(1)
+                    await interruptible_sleep(
+                        interval_minutes * 60,
+                        self.is_shutdown_requested,
+                    )
 
             except Exception as e:
                 logging.error(f"❌ 守护进程会话执行失败: {e}")
-                # 等待一段时间后重试
-                await asyncio.sleep(300)  # 5分钟后重试
+                WeReadApplication._daily_session_count += 1
 
         logging.info("👋 守护进程已停止")
+        return last_result
 
     async def _wait_until_next_day(self):
         """等待到第二天"""
@@ -2720,73 +3062,63 @@ class WeReadApplication:
 
         logging.info(f"⏰ 等待到明天 00:00，剩余 {wait_seconds/3600:.1f} 小时")
 
-        # 分段等待，以便能够响应关闭信号
-        for _ in range(int(wait_seconds)):
-            if WeReadApplication._shutdown_requested:
-                break
-            await asyncio.sleep(1)
+        await interruptible_sleep(
+            wait_seconds,
+            self.is_shutdown_requested,
+        )
 
     @classmethod
-    async def run_single_session(cls):
+    async def run_single_session(cls) -> RunResult:
         """执行单次阅读会话"""
         instance = cls.get_instance()
         if not instance:
-            logging.error("❌ 应用程序实例未初始化")
-            return
+            raise RuntimeError("应用程序实例未初始化")
 
         cls.reset_run_summary()
 
         # 检查是否配置了多用户模式
         if instance.config.users:
-            await cls._run_multi_user_sessions(instance)
+            result = await cls._run_multi_user_sessions(instance)
         else:
-            await cls._run_single_user_session(instance)
+            result = await cls._run_single_user_session(instance)
+        cls.set_run_summary(result.to_summary_dict())
+        persist_run_history(
+            instance.config,
+            instance.execution_type,
+            run_summary=result.to_summary_dict(),
+        )
+        return result
 
     @classmethod
-    async def _run_single_user_session(cls, instance):
+    async def _run_single_user_session(cls, instance) -> RunResult:
         """执行单用户会话"""
         session_manager = None
+        user_token = CURRENT_USER.set("default")
+        session_token = CURRENT_SESSION_ID.set(uuid.uuid4().hex[:10])
         try:
             # 创建会话管理器
-            session_manager = WeReadSessionManager(instance.config)
+            session_manager = WeReadSessionManager(
+                instance.config,
+                is_cancelled=instance.is_shutdown_requested,
+            )
             WeReadApplication._current_session_managers.add(session_manager)
 
             # 执行阅读会话
-            session_stats = await session_manager.start_reading_session()
+            session_result = await session_manager.start_reading_session()
 
-            # 输出统计信息
             logging.info("📊 会话统计:")
-            logging.info(session_stats.get_statistics_summary())
-            cls.set_run_summary({
-                "user_count": 1,
-                "successful_users": 1,
-                "failed_users": 0,
-                "skipped_users": 0,
-                "total_duration_seconds": session_stats.actual_duration_seconds,
-                "total_reads": session_stats.successful_reads,
-                "total_failed_reads": session_stats.failed_reads,
-                "failure_categories": {},
-                "continue_on_failure": False,
-                "final_status": "success",
-            })
+            logging.info(session_result.stats.get_statistics_summary())
+            return RunResult.from_session_results([session_result])
 
         except Exception as e:
             error_msg = f"❌ 阅读会话执行失败: {e}"
             logging.error(error_msg)
-            cls.set_run_summary({
-                "user_count": 1,
-                "successful_users": 0,
-                "failed_users": 1,
-                "skipped_users": 0,
-                "total_duration_seconds": 0,
-                "total_reads": 0,
-                "total_failed_reads": 0,
-                "failure_categories": {
-                    classify_runtime_error(e).value: 1
-                },
-                "continue_on_failure": False,
-                "final_status": "failed",
-            })
+            result = SessionResult(
+                SessionStatus.FAILED,
+                ReadingSession(user_name="default"),
+                classify_runtime_error(e),
+                str(e),
+            )
 
             # 发送错误通知
             try:
@@ -2799,14 +3131,17 @@ class WeReadApplication:
                 )
             except Exception:
                 pass
+            return RunResult.from_session_results([result])
         finally:
             if session_manager is not None:
                 WeReadApplication._current_session_managers.discard(
                     session_manager
                 )
+            CURRENT_SESSION_ID.reset(session_token)
+            CURRENT_USER.reset(user_token)
 
     @classmethod
-    async def _run_multi_user_sessions(cls, instance):
+    async def _run_multi_user_sessions(cls, instance) -> RunResult:
         """执行多用户会话"""
         user_count = len(instance.config.users)
         logging.info(f"🎭 检测到多用户配置，共 {user_count} 个用户")
@@ -2820,46 +3155,38 @@ class WeReadApplication:
         tasks = []
 
         async def run_for_user(user_config: UserConfig):
-            if WeReadApplication._shutdown_requested:
+            if instance.is_shutdown_requested():
                 logging.info("📡 收到关闭信号，跳过后续用户")
-                return {
-                    "name": user_config.name,
-                    "stats": None,
-                    "success": False,
-                    "skipped": True,
-                    "reason": "收到关闭信号，未启动该用户会话",
-                    "error_category": None,
-                }
+                return user_config.name, SessionResult(
+                    SessionStatus.CANCELLED,
+                    ReadingSession(user_name=user_config.name),
+                    message="收到关闭信号，未启动用户会话",
+                )
 
             async with semaphore:
-                if WeReadApplication._shutdown_requested:
-                    return {
-                        "name": user_config.name,
-                        "stats": None,
-                        "success": False,
-                        "skipped": True,
-                        "reason": "收到关闭信号，取消执行该用户会话",
-                        "error_category": None,
-                    }
+                if instance.is_shutdown_requested():
+                    return user_config.name, SessionResult(
+                        SessionStatus.CANCELLED,
+                        ReadingSession(user_name=user_config.name),
+                        message="收到关闭信号，取消用户会话",
+                    )
 
-                logging.info(f"👤 开始执行用户 {user_config.name} 的阅读会话")
-                session_manager = WeReadSessionManager(
-                    instance.config, user_config
-                )
-                WeReadApplication._current_session_managers.add(session_manager)
+                user_token = CURRENT_USER.set(user_config.name)
+                session_token = CURRENT_SESSION_ID.set(uuid.uuid4().hex[:10])
+                session_manager = None
 
                 try:
-                    session_stats = await session_manager.start_reading_session()
+                    logging.info(f"👤 开始执行用户 {user_config.name} 的阅读会话")
+                    session_manager = WeReadSessionManager(
+                        instance.config,
+                        user_config,
+                        is_cancelled=instance.is_shutdown_requested,
+                    )
+                    WeReadApplication._current_session_managers.add(session_manager)
+                    session_result = await session_manager.start_reading_session()
                     logging.info(f"📊 用户 {user_config.name} 会话统计:")
-                    logging.info(session_stats.get_statistics_summary())
-                    return {
-                        "name": user_config.name,
-                        "stats": session_stats,
-                        "success": True,
-                        "skipped": False,
-                        "reason": "",
-                        "error_category": None,
-                    }
+                    logging.info(session_result.stats.get_statistics_summary())
+                    return user_config.name, session_result
                 except Exception as e:
                     error_msg = (
                         f"❌ 用户 {user_config.name} 阅读会话执行失败: {e}"
@@ -2875,126 +3202,70 @@ class WeReadApplication:
                         )
                     except Exception:
                         pass
-                    return {
-                        "name": user_config.name,
-                        "stats": None,
-                        "success": False,
-                        "skipped": False,
-                        "reason": str(e),
-                        "error_category": classify_runtime_error(e).value,
-                    }
-                finally:
-                    WeReadApplication._current_session_managers.discard(
-                        session_manager
+                    return user_config.name, SessionResult(
+                        SessionStatus.FAILED,
+                        ReadingSession(user_name=user_config.name),
+                        classify_runtime_error(e),
+                        str(e),
                     )
+                finally:
+                    if session_manager is not None:
+                        WeReadApplication._current_session_managers.discard(
+                            session_manager
+                        )
+                    CURRENT_SESSION_ID.reset(session_token)
+                    CURRENT_USER.reset(user_token)
 
         for user_config in instance.config.users:
             tasks.append(asyncio.create_task(run_for_user(user_config)))
 
-        all_session_stats = []
-        successful_users = []
-        failed_users = []
-        skipped_users = []
-        failure_categories: Dict[str, int] = {}
+        session_results: List[SessionResult] = []
+        skipped_users = 0
 
         for task in asyncio.as_completed(tasks):
-            result = await task
-            if not result:
-                continue
-            if result.get("skipped"):
-                skipped_users.append(result["name"])
-                logging.info(
-                    f"⏭️ 用户 {result['name']} 已跳过: {result['reason']}"
-                )
-            elif result["success"] and result["stats"]:
-                all_session_stats.append((result["name"], result["stats"]))
-                successful_users.append(result["name"])
+            user_name, session_result = await task
+            if session_result is None:
+                skipped_users += 1
+                logging.info(f"⏭️ 用户 {user_name} 已跳过: 收到关闭信号")
             else:
-                failed_users.append(result["name"])
-                failure_category = result.get("error_category")
-                if failure_category:
-                    failure_categories[failure_category] = (
-                        failure_categories.get(failure_category, 0) + 1
-                    )
+                session_results.append(session_result)
 
-        # 生成多用户会话总结
-        await cls._generate_multi_user_summary(
-            instance,
-            all_session_stats,
-            successful_users,
-            failed_users,
-            skipped_users,
-            failure_categories,
+        run_result = RunResult.from_session_results(
+            session_results,
+            skipped_users=skipped_users,
+            continue_on_failure=True,
         )
+        await cls._generate_multi_user_summary(instance, run_result)
+        return run_result
 
     @classmethod
     async def _generate_multi_user_summary(
         cls,
         instance,
-        all_session_stats,
-        successful_users,
-        failed_users,
-        skipped_users,
-        failure_categories,
+        run_result: RunResult,
     ):
         """生成多用户会话总结"""
-        total_users = len(instance.config.users)
-        successful_count = len(successful_users)
-        failed_count = len(failed_users)
-        skipped_count = len(skipped_users)
-
-        # 计算总体统计
-        total_duration = sum(
-            stats.actual_duration_seconds for _, stats in all_session_stats
-        )
-        total_reads = sum(
-            stats.successful_reads for _, stats in all_session_stats
-        )
-        total_failed_reads = sum(
-            stats.failed_reads for _, stats in all_session_stats
-        )
-
         summary = f"""🎭 多用户阅读会话总结
 
 👥 用户统计:
-  📊 总用户数: {total_users}
-  ✅ 成功用户: {successful_count} ({', '.join(successful_users)
-                                       if successful_users else '无'})
-  ❌ 失败用户: {failed_count} ({', '.join(failed_users) if failed_users else '无'})
-  ⏭️ 跳过用户: {skipped_count} ({', '.join(skipped_users) if skipped_users else '无'})
+  📊 总用户数: {run_result.user_count}
+  ✅ 成功用户: {run_result.successful_users}
+  ❌ 失败用户: {run_result.failed_users}
+  📡 取消用户: {run_result.cancelled_users}
+  ⏭️ 跳过用户: {run_result.skipped_users}
   🧭 失败后继续: 是
 
 📖 阅读统计:
-  ⏱️ 总阅读时长: {total_duration // 60}分{total_duration % 60}秒
-  ✅ 成功请求: {total_reads}次
-  ❌ 失败请求: {total_failed_reads}次
-  📈 整体成功率: {(total_reads / (total_reads + total_failed_reads) * 100)
-                    if (total_reads + total_failed_reads) > 0 else 0:.1f}%
-  🧩 失败分类: {', '.join(f'{category}={count}' for category, count in failure_categories.items())
-                   if failure_categories else '无'}
+  ⏱️ 总阅读时长: {run_result.total_duration_seconds // 60}分{run_result.total_duration_seconds % 60}秒
+  ✅ 成功请求: {run_result.total_reads}次
+  ❌ 失败请求: {run_result.total_failed_reads}次
+  🧩 失败分类: {', '.join(f'{category}={count}' for category, count in run_result.failure_categories.items())
+                   if run_result.failure_categories else '无'}
 
-🎉 多用户阅读任务完成！"""
+最终状态: {run_result.final_status}"""
 
         logging.info("📊 多用户会话总结:")
         logging.info(summary)
-        final_status = "success"
-        if successful_count == 0 and failed_count > 0:
-            final_status = "failed"
-        elif failed_count > 0 or skipped_count > 0:
-            final_status = "partial_success"
-        cls.set_run_summary({
-            "user_count": total_users,
-            "successful_users": successful_count,
-            "failed_users": failed_count,
-            "skipped_users": skipped_count,
-            "total_duration_seconds": total_duration,
-            "total_reads": total_reads,
-            "total_failed_reads": total_failed_reads,
-            "failure_categories": failure_categories,
-            "continue_on_failure": True,
-            "final_status": final_status,
-        })
-
         # 发送总结通知
         if (instance.config.notification.enabled and
                 instance.config.notification.include_statistics):
@@ -3038,10 +3309,16 @@ class WeReadSessionManager:
         "s": "36cc0815"  # 校验和或哈希值
     }
 
-    def __init__(self, config: WeReadConfig, user_config: UserConfig = None):
+    def __init__(
+        self,
+        config: WeReadConfig,
+        user_config: UserConfig = None,
+        is_cancelled: Optional[Callable[[], bool]] = None,
+    ):
         self.config = config
         self.user_config = user_config
         self.user_name = user_config.name if user_config else "default"
+        self._is_cancelled = is_cancelled or (lambda: False)
 
         # 应用用户特定的阅读配置覆盖
         self.effective_reading_config = self._apply_reading_overrides(
@@ -3120,51 +3397,25 @@ class WeReadSessionManager:
         """加载CURL配置"""
         curl_content = ""
 
-        # 如果是多用户模式，优先使用用户特定的配置
         if self.user_config:
-            # 用户特定的文件路径
-            if (self.user_config.file_path and
-                    Path(self.user_config.file_path).exists()):
-                try:
-                    with open(
-                        self.user_config.file_path, 'r', encoding='utf-8'
-                    ) as f:
-                        curl_content = f.read().strip()
-                    logging.info(
-                        f"✅ 用户 {self.user_name} 已从文件加载CURL配置: "
-                        f"{self.user_config.file_path}"
-                    )
-                except Exception as e:
-                    logging.error(
-                        f"❌ 用户 {self.user_name} CURL配置文件读取失败: {e}"
-                    )
+            curl_content = load_curl_source(
+                self.user_config.file_path,
+                self.user_config.content,
+                f"curl_config.users.{self.user_name}",
+            )
+            if curl_content:
+                logging.info(
+                    "✅ 用户 %s 已加载独立 CURL 配置", self.user_name
+                )
 
-            # 用户特定的内容
-            elif self.user_config.content:
-                curl_content = self.user_config.content
-                logging.info(f"✅ 用户 {self.user_name} 已从配置加载CURL内容")
-
-        # 回退到全局配置
         if not curl_content:
-            # 优先从文件读取
-            if (self.config.curl_file_path and
-                    Path(self.config.curl_file_path).exists()):
-                try:
-                    with open(
-                        self.config.curl_file_path, 'r', encoding='utf-8'
-                    ) as f:
-                        curl_content = f.read().strip()
-                    logging.info(
-                        f"✅ 已从全局文件加载CURL配置: "
-                        f"{self.config.curl_file_path}"
-                    )
-                except Exception as e:
-                    logging.error(f"❌ 全局CURL配置文件读取失败: {e}")
-
-            # 其次从环境变量读取
-            elif self.config.curl_content:
-                curl_content = self.config.curl_content
-                logging.info("✅ 已从环境变量加载CURL配置")
+            curl_content = load_curl_source(
+                self.config.curl_file_path,
+                self.config.curl_content,
+                "curl_config",
+            )
+            if curl_content:
+                logging.info("✅ 已加载全局 CURL 配置")
 
         # 解析CURL配置
         if curl_content:
@@ -3222,8 +3473,8 @@ class WeReadSessionManager:
         # 记录用户身份信息（用于调试）
         logging.info(
             f"🔍 用户 {self.user_name} 身份验证: "
-            f"ps={ps_value[:8]}***, pc={pc_value[:8]}***, "
-            f"appId={app_id[:8]}***"
+            f"ps={_secret_marker(ps_value)}, pc={_secret_marker(pc_value)}, "
+            f"appId={_secret_marker(app_id)}"
         )
         
         # 验证关键身份字段是否存在
@@ -3282,11 +3533,16 @@ class WeReadSessionManager:
 
     def _apply_curl_payload(self, curl_data: Dict[str, Any]):
         """应用CURL提取出的协议载荷"""
-        required_fields = ['appId', 'b', 'c']
-        missing_fields = [
-            field for field in required_fields
-            if field not in curl_data
-        ]
+        reusable_fields = {
+            "appId", "ps", "pc", "b", "c", "ci", "co", "sm", "pr", "rt"
+        }
+        self.data.update({
+            key: value for key, value in curl_data.items()
+            if key in reusable_fields
+        })
+        self._validate_and_log_user_identity()
+
+        missing_fields = [field for field in ("b", "c") if not curl_data.get(field)]
 
         if missing_fields:
             logging.warning(
@@ -3295,11 +3551,15 @@ class WeReadSessionManager:
                     f"缺失字段: {', '.join(missing_fields)}，将回退到配置阅读位置",
                 )
             )
-            self.reading_manager.set_curl_data("", "")
+            if not self.reading_manager.set_curl_data("", ""):
+                raise ValueError(
+                    self._build_protocol_error(
+                        "CURL 缺少阅读位置且配置回退失败",
+                        f"缺失字段: {', '.join(missing_fields)}",
+                    )
+                )
             return
 
-        self.data.update(curl_data)
-        self._validate_and_log_user_identity()
         logging.info(
             f"✅ 用户 {self.user_name} 已使用CURL中的请求数据，"
             f"包含字段: {list(curl_data.keys())}"
@@ -3331,11 +3591,14 @@ class WeReadSessionManager:
         self, response_data: Dict[str, Any], response_time: float
     ) -> Tuple[bool, float]:
         """集中处理阅读接口响应中的协议兼容分支"""
-        if 'succ' in response_data and 'synckey' in response_data:
-            logging.debug(f"✅ 请求成功: {response_data}")
+        if is_successful_read_response(response_data):
+            logging.debug(
+                "阅读请求成功，响应字段: %s",
+                ", ".join(sorted(response_data.keys())),
+            )
             return True, response_time
 
-        if 'succ' in response_data:
+        if response_data.get('succ'):
             logging.warning(
                 self._build_protocol_warning(
                     "阅读响应缺少 synckey",
@@ -3358,116 +3621,192 @@ class WeReadSessionManager:
         await self._refresh_cookie()
         return False, response_time
 
-    async def start_reading_session(self) -> ReadingSession:
-        """开始阅读会话"""
+    async def start_reading_session(self) -> SessionResult:
+        """运行会话并返回不会与统计对象混淆的状态结果。"""
         user_info = f" (用户: {self.user_name})" if self.user_config else ""
-        logging.info(f"🚀 微信读书阅读机器人启动{user_info}")
-        logging.info(
-            f"📋 配置信息: 阅读模式 {self.effective_reading_config.mode}, "
-            f"目标时长 {self.effective_reading_config.target_duration} 分钟"
-        )
-
-        # 启动延迟
-        startup_delay = RandomHelper.get_random_int_from_range(
-            self.config.startup_delay
-        )
-        logging.info(f"⏳ 启动延迟 {startup_delay} 秒...")
-        await asyncio.sleep(startup_delay)
-
-        # 设置会话统计
-        target_minutes = RandomHelper.get_random_int_from_range(
-            self.effective_reading_config.target_duration
-        )
-        self.session_stats.start_time = datetime.now()
-        self.session_stats.target_duration_minutes = target_minutes
-
-        logging.info(f"🎯 本次目标阅读时长: {target_minutes} 分钟")
-
-        # 刷新cookie
-        if not await self._refresh_cookie():
-            raise Exception("Cookie刷新失败，程序终止")
-
-        # 开始阅读循环
-        target_seconds = target_minutes * 60
-        last_time = int(time.time()) - 30
+        is_cancelled = self._is_cancelled
+        monotonic = getattr(self, "_monotonic", time.monotonic)
+        result: Optional[SessionResult] = None
 
         try:
-            while self.session_stats.actual_duration_seconds < target_seconds:
-                # 检查是否收到关闭信号
-                if WeReadApplication._shutdown_requested:
-                    logging.info("📡 收到关闭信号，结束阅读会话")
+            logging.info(f"🚀 微信读书阅读机器人启动{user_info}")
+            logging.info(
+                f"📋 配置信息: 阅读模式 {self.effective_reading_config.mode}, "
+                f"目标时长 {self.effective_reading_config.target_duration} 分钟"
+            )
+
+            startup_delay = RandomHelper.get_random_int_from_range(
+                self.config.startup_delay
+            )
+            logging.info(f"⏳ 启动延迟 {startup_delay} 秒...")
+            if not await interruptible_sleep(startup_delay, is_cancelled):
+                result = SessionResult(
+                    SessionStatus.CANCELLED, self.session_stats,
+                    message="启动延迟期间收到关闭信号",
+                )
+                return result
+
+            target_minutes = RandomHelper.get_random_int_from_range(
+                self.effective_reading_config.target_duration
+            )
+            self.session_stats.start_time = datetime.now()
+            self.session_stats.target_duration_minutes = target_minutes
+            started_monotonic = monotonic()
+            deadline = started_monotonic + target_minutes * 60
+
+            def refresh_duration() -> None:
+                elapsed = max(0.0, monotonic() - started_monotonic)
+                self.session_stats.actual_duration_seconds = int(elapsed)
+
+            logging.info(f"🎯 本次目标阅读时长: {target_minutes} 分钟")
+
+            if is_cancelled():
+                result = SessionResult(
+                    SessionStatus.CANCELLED, self.session_stats,
+                    message="收到关闭信号",
+                )
+                return result
+
+            if not await self._refresh_cookie():
+                result = SessionResult(
+                    SessionStatus.FAILED,
+                    self.session_stats,
+                    RuntimeErrorCategory.AUTH,
+                    "Cookie 刷新失败",
+                )
+                await self._notify_session_result(result)
+                return result
+
+            last_time = int(time.time()) - 30
+            consecutive_failures = 0
+            max_failures = self.effective_reading_config.max_consecutive_failures
+
+            while monotonic() < deadline:
+                refresh_duration()
+                if is_cancelled():
+                    result = SessionResult(
+                        SessionStatus.CANCELLED,
+                        self.session_stats,
+                        message="收到关闭信号",
+                    )
                     break
 
-                try:
-                    # 模拟人类行为：判断是否休息
-                    if self.behavior_simulator.should_take_break():
-                        break_duration = (
-                            self.behavior_simulator.get_break_duration()
-                        )
-                        logging.info(f"☕ 休息一下... {break_duration} 秒")
-
-                        await asyncio.sleep(break_duration)
-                        self.session_stats.breaks_taken += 1
-                        self.session_stats.total_break_time += break_duration
-                        continue
-
-                    # 模拟阅读请求
-                    success, response_time = (
-                        await self._simulate_reading_request(last_time)
+                if self.behavior_simulator.should_take_break():
+                    break_duration = self.behavior_simulator.get_break_duration()
+                    logging.info(f"☕ 休息一下... {break_duration} 秒")
+                    completed = await interruptible_sleep(
+                        break_duration, is_cancelled
                     )
+                    refresh_duration()
+                    if not completed:
+                        result = SessionResult(
+                            SessionStatus.CANCELLED,
+                            self.session_stats,
+                            message="休息期间收到关闭信号",
+                        )
+                        break
+                    self.session_stats.breaks_taken += 1
+                    self.session_stats.total_break_time += break_duration
+                    continue
 
+                try:
+                    success, response_time = await self._simulate_reading_request(
+                        last_time
+                    )
+                    refresh_duration()
+                    self.session_stats.response_times.append(response_time)
                     if success:
                         self.session_stats.successful_reads += 1
+                        consecutive_failures = 0
                         last_time = int(time.time())
-
-                        # 计算实际阅读时长
-                        current_time = datetime.now()
-                        duration_delta = (
-                            current_time - self.session_stats.start_time
-                        )
-                        self.session_stats.actual_duration_seconds = int(
-                            duration_delta.total_seconds()
-                        )
-
-                        progress_minutes = (
-                            self.session_stats.actual_duration_seconds // 60
-                        )
                         logging.info(
-                            f"✅ 阅读成功，进度: {progress_minutes}分钟 / "
-                            f"{target_minutes}分钟"
+                            "✅ 阅读成功，进度: %s分钟 / %s分钟",
+                            self.session_stats.actual_duration_seconds // 60,
+                            target_minutes,
                         )
                     else:
                         self.session_stats.failed_reads += 1
-
-                    # 记录响应时间
-                    self.session_stats.response_times.append(response_time)
-
-                    # 获取下次阅读间隔
-                    interval = self.behavior_simulator.get_reading_interval(
-                        self.effective_reading_config.reading_interval
-                    )
-                    await asyncio.sleep(interval)
-
-                except Exception as e:
-                    logging.error(f"❌ 阅读请求异常: {e}")
+                        consecutive_failures += 1
+                except Exception as exc:
+                    logging.error("❌ 阅读请求异常: %s", exc)
                     self.session_stats.failed_reads += 1
-                    await asyncio.sleep(30)
+                    consecutive_failures += 1
 
-            # 完成会话
+                if consecutive_failures >= max_failures:
+                    result = SessionResult(
+                        SessionStatus.FAILED,
+                        self.session_stats,
+                        RuntimeErrorCategory.PROTOCOL,
+                        f"连续阅读失败达到上限 {max_failures} 次",
+                    )
+                    break
+
+                if monotonic() >= deadline:
+                    break
+
+                interval = self.behavior_simulator.get_reading_interval(
+                    self.effective_reading_config.reading_interval
+                )
+                if not await interruptible_sleep(interval, is_cancelled):
+                    result = SessionResult(
+                        SessionStatus.CANCELLED,
+                        self.session_stats,
+                        message="等待期间收到关闭信号",
+                    )
+                    break
+                refresh_duration()
+
+            refresh_duration()
             self.session_stats.end_time = datetime.now()
-            logging.info("🎉 阅读任务完成！")
+            if result is None:
+                if self.session_stats.successful_reads > 0:
+                    result = SessionResult(
+                        SessionStatus.SUCCESS, self.session_stats
+                    )
+                else:
+                    result = SessionResult(
+                        SessionStatus.FAILED,
+                        self.session_stats,
+                        RuntimeErrorCategory.PROTOCOL,
+                        "会话结束但没有成功阅读请求",
+                    )
 
-            # 发送通知
-            if (self.config.notification.enabled and
-                    self.config.notification.include_statistics):
+            await self._notify_session_result(result)
+
+            return result
+        except Exception as exc:
+            self.session_stats.end_time = datetime.now()
+            result = SessionResult(
+                SessionStatus.FAILED,
+                self.session_stats,
+                classify_runtime_error(exc),
+                str(exc),
+            )
+            await self._notify_session_result(result)
+            return result
+        finally:
+            if self.session_stats.end_time is None:
+                self.session_stats.end_time = datetime.now()
+            await self.http_client.close()
+
+    async def _notify_session_result(self, result: SessionResult) -> None:
+        """按最终状态发送会话通知，通知失败不改变会话结果。"""
+        if not (self.config.notification.enabled and
+                self.config.notification.include_statistics):
+            return
+        try:
+            if result.status == SessionStatus.SUCCESS:
                 await self.notification_service.send_notification_async(
                     self.session_stats.get_statistics_summary(),
-                    event=NotificationEvent.SESSION_SUCCESS
+                    event=NotificationEvent.SESSION_SUCCESS,
                 )
-
-            return self.session_stats
-        finally:
-            await self.http_client.close()
+            elif result.status == SessionStatus.FAILED:
+                await self.notification_service.send_notification_async(
+                    result.message or "阅读会话失败",
+                    event=NotificationEvent.SESSION_FAILURE,
+                )
+        except Exception as exc:
+            logging.warning("会话通知发送失败: %s", exc)
 
     def _prepare_read_payload(self, last_time: int) -> Tuple[str, str]:
         """准备单次阅读请求的协议载荷"""
@@ -3483,6 +3822,8 @@ class WeReadSessionManager:
             logging.debug(
                 f"🔢 设置章节索引: ci={chapter_ci} (章节: {chapter_id})"
             )
+        else:
+            self.data.pop('ci', None)
 
         self._apply_user_identity_to_payload(book_id, chapter_id)
 
@@ -3521,8 +3862,8 @@ class WeReadSessionManager:
                 self.data['appId'] = self.user_app_id
 
             logging.debug(
-                f"🔒 用户 {self.user_name} 身份确认: ps={self.user_ps[:10]}..., "
-                f"pc={self.user_pc[:10]}..., book={book_id[:10]}..., "
+                f"🔒 用户 {self.user_name} 身份确认: ps={_secret_marker(self.user_ps)}, "
+                f"pc={_secret_marker(self.user_pc)}, book={book_id[:10]}..., "
                 f"chapter={chapter_id[:10]}..."
             )
 
@@ -3544,7 +3885,10 @@ class WeReadSessionManager:
                 self.READ_URL, self.data, self.headers, self.cookies
             )
 
-            logging.debug(f"📕 响应数据: {response_data}")
+            logging.debug(
+                "阅读响应字段: %s",
+                ", ".join(sorted(response_data.keys())),
+            )
             return await self._handle_protocol_response(
                 response_data, response_time
             )
@@ -3585,7 +3929,9 @@ class WeReadSessionManager:
                 return False
 
             self.cookies['wr_skey'] = new_skey
-            logging.info(f"✅ Cookie刷新成功，新密钥: {new_skey[:8]}***")
+            logging.info(
+                "✅ Cookie刷新成功，新密钥: %s", _secret_marker(new_skey)
+            )
             return True
 
         except Exception as e:
@@ -3611,7 +3957,7 @@ class WeReadSessionManager:
                 self.FIX_SYNCKEY_URL,
                 headers=self.headers,
                 cookies=self.cookies,
-                json_data={"bookIds": ["3300060341"]}
+                json_data={"bookIds": [self.data.get("b")]}
             )
         except Exception as e:
             logging.error(
@@ -3715,6 +4061,7 @@ def build_run_history_record(
         "user_count": effective_user_count,
         "successful_users": run_summary.get("successful_users", 0),
         "failed_users": run_summary.get("failed_users", 0),
+        "cancelled_users": run_summary.get("cancelled_users", 0),
         "skipped_users": run_summary.get("skipped_users", 0),
         "total_duration_seconds": run_summary.get("total_duration_seconds", 0),
         "total_reads": run_summary.get("total_reads", 0),
@@ -3846,6 +4193,7 @@ def format_last_run_summary(last_record: Optional[Dict[str, Any]]) -> str:
         f"  用户数量: {last_record.get('user_count', 0)}",
         f"  成功用户: {last_record.get('successful_users', 0)}",
         f"  失败用户: {last_record.get('failed_users', 0)}",
+        f"  取消用户: {last_record.get('cancelled_users', 0)}",
         f"  跳过用户: {last_record.get('skipped_users', 0)}",
         f"  总阅读时长: {last_record.get('total_duration_seconds', 0)} 秒",
         f"  成功请求: {last_record.get('total_reads', 0)}",
@@ -3920,6 +4268,7 @@ def build_runtime_summary(
             ),
             f"  成功用户: {run_summary.get('successful_users', 0)}",
             f"  失败用户: {run_summary.get('failed_users', 0)}",
+            f"  取消用户: {run_summary.get('cancelled_users', 0)}",
             f"  跳过用户: {run_summary.get('skipped_users', 0)}",
             f"  总阅读时长: {run_summary.get('total_duration_seconds', 0)} 秒",
             f"  成功请求: {run_summary.get('total_reads', 0)}",
@@ -4119,6 +4468,17 @@ def _build_notification_diagnostic_lines(
 
 def _validate_runtime_config(config: WeReadConfig):
     """校验运行前的配置语义并给出更精确的路径提示"""
+    validate_config_semantics(config)
+    if (config.startup_mode == StartupMode.SCHEDULED.value
+            and not config.schedule.enabled):
+        raise _config_error(
+            "schedule.enabled", "scheduled 模式下必须为 true", False
+        )
+    if (config.startup_mode == StartupMode.DAEMON.value
+            and not config.daemon.enabled):
+        raise _config_error(
+            "daemon.enabled", "daemon 模式下必须为 true", False
+        )
     validation_errors = []
     allowed_override_keys = ", ".join(USER_READING_OVERRIDE_FIELDS.keys())
 
@@ -4184,7 +4544,7 @@ def _validate_runtime_config(config: WeReadConfig):
             )
 
     if validation_errors:
-        raise ValueError(
+        raise ConfigError(
             "配置校验失败:\n"
             + "\n".join(f"  • {error}" for error in validation_errors)
         )
@@ -4214,12 +4574,19 @@ def setup_logging(logging_config: LoggingConfig = None, verbose: bool = False):
 
     # 设置日志格式
     format_map = {
-        'simple': '%(levelname)s - %(message)s',
-        'detailed': '%(asctime)s - %(levelname)-8s - %(message)s',
-        'json': ('{"timestamp": "%(asctime)s", "level": "%(levelname)s", '
-                 '"message": "%(message)s"}')
+        'simple': '%(levelname)s - [user=%(user)s session=%(session_id)s] - %(message)s',
+        'detailed': (
+            '%(asctime)s - %(levelname)-8s - '
+            '[user=%(user)s session=%(session_id)s] - %(message)s'
+        ),
     }
-    log_format = format_map.get(logging_config.format, format_map['detailed'])
+    if logging_config.format == "json":
+        formatter = JsonLogFormatter()
+    else:
+        formatter = logging.Formatter(
+            format_map.get(logging_config.format, format_map['detailed'])
+        )
+    context_filter = LogContextFilter()
 
     # 解析日志文件大小
     def parse_size(size_str: str) -> int:
@@ -4240,7 +4607,8 @@ def setup_logging(logging_config: LoggingConfig = None, verbose: bool = False):
     # 控制台处理器
     if logging_config.console:
         console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter(log_format))
+        console_handler.addFilter(context_filter)
+        console_handler.setFormatter(formatter)
         handlers.append(console_handler)
 
     # 文件处理器（支持轮转）
@@ -4252,27 +4620,28 @@ def setup_logging(logging_config: LoggingConfig = None, verbose: bool = False):
             backupCount=logging_config.backup_count,
             encoding='utf-8'
         )
-        file_handler.setFormatter(logging.Formatter(log_format))
+        file_handler.addFilter(context_filter)
+        file_handler.setFormatter(formatter)
         handlers.append(file_handler)
     except Exception as e:
         # 如果轮转处理器失败，使用普通文件处理器
         file_handler = logging.FileHandler(
             logging_config.file, encoding='utf-8'
         )
-        file_handler.setFormatter(logging.Formatter(log_format))
+        file_handler.addFilter(context_filter)
+        file_handler.setFormatter(formatter)
         handlers.append(file_handler)
         print(f"警告: 日志轮转设置失败，使用普通文件处理器: {e}")
 
     # 配置根日志记录器
     logging.basicConfig(
         level=log_level,
-        format=log_format,
         handlers=handlers,
         force=True  # 强制重新配置
     )
 
 
-def parse_arguments():
+def parse_arguments(argv: Optional[List[str]] = None):
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
         description="微信读书智能阅读机器人",
@@ -4326,113 +4695,66 @@ def parse_arguments():
         help="显示最近一次真实执行结果并退出"
     )
 
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 async def _validate_curl_configs(config: WeReadConfig):
-    """
-    验证所有CURL配置的合法性
-
-    Args:
-        config: 微信读书配置对象
-
-    Raises:
-        ValueError: 当CURL配置验证失败时
-    """
-    # 如果配置了多用户，验证每个用户的配置
+    """验证全部 CURL 来源，不发起网络请求。"""
     if config.users:
-        logging.info(f"🔍 验证多用户CURL配置，共 {len(config.users)} 个用户")
-
-        for user_config in config.users:
-            curl_content = ""
-
-            # 获取用户的CURL配置
-            if user_config.file_path and Path(user_config.file_path).exists():
-                try:
-                    with open(user_config.file_path, 'r', encoding='utf-8') as f:
-                        curl_content = f.read().strip()
-                except Exception as e:
-                    logging.error(
-                        format_error_message(
-                            f"❌ 用户 {user_config.name} CURL文件读取失败", e
-                        )
-                    )
-                    raise ValueError(f"用户 {user_config.name} 的CURL配置文件无法读取: {e}")
-
-            elif user_config.content:
-                curl_content = user_config.content
-
-            if not curl_content:
-                logging.error(f"❌ 用户 {user_config.name} 未配置CURL数据，请检查配置文件")
-                raise ValueError(f"用户 {user_config.name} 未配置CURL数据，请检查配置文件")
-
-            # 解析和验证
-            try:
-                headers, cookies, curl_data = CurlParser.parse_curl_command(curl_content)
-                is_valid, validation_errors = CurlParser.validate_curl_headers(
-                    headers, cookies, curl_data, user_config.name
-                )
-
-                if not is_valid:
-                    error_msg = (
-                        f"❌ 用户 {user_config.name} CURL配置验证失败:\n"
-                        + "\n".join(f"  • {error}" for error in validation_errors)
-                    )
-                    logging.error(error_msg)
-                    raise ValueError(error_msg)
-
-            except Exception as e:
-                error_msg = format_error_message(
-                    f"❌ 用户 {user_config.name} CURL配置解析失败", e
-                )
-                logging.error(error_msg)
-                raise ValueError(error_msg)
+        logging.info("🔍 验证多用户CURL配置，共 %s 个用户", len(config.users))
+        sources = [
+            (
+                user.name,
+                user.file_path,
+                user.content,
+                f"curl_config.users[{index}]",
+            )
+            for index, user in enumerate(config.users)
+        ]
     else:
-        # 单用户模式验证
-        curl_content = ""
+        sources = [
+            (
+                "default",
+                config.curl_file_path,
+                config.curl_content,
+                "curl_config",
+            )
+        ]
 
-        if config.curl_file_path and Path(config.curl_file_path).exists():
-            try:
-                with open(config.curl_file_path, 'r', encoding='utf-8') as f:
-                    curl_content = f.read().strip()
-            except Exception as e:
-                logging.error(
-                    format_error_message("❌ 全局CURL文件读取失败", e)
-                )
-                raise ValueError(f"全局CURL配置文件无法读取: {e}")
-
-        elif config.curl_content:
-            curl_content = config.curl_content
-
-        # 如果没有CURL配置，则退出
+    for user_name, file_path, inline_content, source_path in sources:
+        curl_content = load_curl_source(
+            file_path, inline_content, source_path
+        )
         if not curl_content:
-            logging.error("❌ 未配置CURL数据，请检查配置文件")
-            raise ValueError("未配置CURL数据，请检查配置文件")
-
-        # 解析和验证
-        try:
-            headers, cookies, curl_data = CurlParser.parse_curl_command(curl_content)
-            is_valid, validation_errors = CurlParser.validate_curl_headers(
-                headers, cookies, curl_data, "default"
+            raise ConfigError(
+                f"{source_path}: 未配置可用的 CURL 文件或内容"
             )
 
-            if not is_valid:
-                error_msg = (
-                    "❌ 全局CURL配置验证失败:\n"
-                    + "\n".join(f"  • {error}" for error in validation_errors)
-                )
-                logging.error(error_msg)
-                raise ValueError(error_msg)
+        try:
+            headers, cookies, curl_data = CurlParser.parse_curl_command(
+                curl_content
+            )
+            is_valid, validation_errors = CurlParser.validate_curl_headers(
+                headers, cookies, curl_data, user_name
+            )
+        except Exception as exc:
+            if isinstance(exc, ConfigError):
+                raise
+            raise ConfigError(
+                f"{source_path}: CURL 解析失败，"
+                f"当前值={type(exc).__name__}"
+            ) from exc
 
-        except Exception as e:
-            error_msg = format_error_message("❌ 全局CURL配置解析失败", e)
-            logging.error(error_msg)
-            raise ValueError(error_msg)
+        if not is_valid:
+            error_details = "\n".join(
+                f"  • {error}" for error in validation_errors
+            )
+            raise ConfigError(
+                f"{source_path}: CURL 校验失败\n{error_details}"
+            )
 
     logging.info("✅ 所有CURL配置验证通过")
-
-
-async def main():
+async def main() -> int:
     """主函数"""
     # 解析命令行参数
     args = parse_arguments()
@@ -4460,7 +4782,7 @@ async def main():
     if required_deps:
         print(f"❌ 缺少依赖: {', '.join(required_deps)}")
         print("请安装: pip install -r requirements.txt")
-        return
+        return 1
 
     curl_validated = False
 
@@ -4475,7 +4797,7 @@ async def main():
             if history:
                 last_record = history[-1]
             print(format_last_run_summary(last_record))
-            return
+            return 0
 
         # 使用配置设置日志
         setup_logging(config.logging, verbose=args.verbose)
@@ -4505,15 +4827,13 @@ async def main():
 
         if args.validate_config or args.dry_run:
             logging.info("🧪 诊断模式结束，未启动阅读会话")
-            return
+            return 0
 
         # 创建并运行应用程序
         run_started = True
-        app = WeReadApplication(config)
-        await app.run()
-        run_summary = WeReadApplication.get_run_summary()
-        if run_summary:
-            persist_run_history(config, execution_mode, run_summary=run_summary)
+        app = WeReadApplication(config, execution_type=execution_mode)
+        run_result = await app.run()
+        run_summary = run_result.to_summary_dict()
         logging.info(
             "\n" + build_runtime_summary(
                 config,
@@ -4522,9 +4842,13 @@ async def main():
                 run_summary=run_summary,
             )
         )
+        if isinstance(getattr(app, "shutdown_signal", None), int):
+            return 130
+        return run_result.exit_code
 
     except KeyboardInterrupt:
         logging.info("👋 用户中断，程序退出")
+        return 130
     except Exception as e:
         error_msg = format_error_message("❌ 程序运行错误", e)
         logging.error(error_msg)
@@ -4551,7 +4875,7 @@ async def main():
             )
         except Exception:
             pass
+        return 1
 
 if __name__ == "__main__":
-    # 运行程序
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

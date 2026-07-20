@@ -48,6 +48,7 @@ curl 'https://weread.qq.com/web/book/read' -H 'cookie: wr_skey=user2; ...' --dat
 |------------|------|------|
 | `TARGET_DURATION` | 默认阅读时长，格式如 `5-10`；用于定时触发或手动触发留空时的默认值 | 1-2 |
 | `MAX_CONCURRENT_USERS` | 多用户并发数量（>=1） | 1 |
+| `MAX_CONSECUTIVE_FAILURES` | 单个用户连续阅读失败上限，达到后结束该会话 | 5 |
 | `HACK_COOKIE_REFRESH_QL` | Cookie 刷新兼容开关全局默认值，遇到刷新失败可切换 true/false | false |
 | `NOTIFICATION_ONLY_ON_FAILURE` | 仅失败通知开关（true/false），覆盖 workflow 运行参数 | false |
 | `HISTORY_ENABLED` | 是否启用执行历史持久化 | true |
@@ -267,6 +268,14 @@ history:
 - ✅ **成功**: 阅读任务正常完成
 - ❌ **失败**: 检查错误日志，通常是配置问题
 - ⏸️ **取消**: 手动取消或超时（2小时）
+
+程序退出码如下：
+
+- `0`：所有用户成功。
+- `1`：配置错误、运行失败或部分用户失败。
+- `130`：手动取消或系统中断。
+
+scheduled和daemon模式会为每次会话单独写历史。单次失败不会结束常驻进程。
 
 ## ❓ 常见问题
 

@@ -5,12 +5,14 @@ on:
     branches: [ main, dev ]
     paths:
       - 'weread-bot.py'
+      - 'tests/**'
       - 'requirements.txt'
       - '.github/workflows/ci.yml'
   pull_request:
     branches: [ main ]
     paths:
       - 'weread-bot.py'
+      - 'tests/**'
       - 'requirements.txt'
       - '.github/workflows/ci.yml'
 
@@ -49,6 +51,10 @@ jobs:
     - name: Test script syntax
       run: |
         python -m py_compile weread-bot.py
+
+    - name: Run behavior tests
+      run: |
+        python -m unittest discover -s tests -v
 
     - name: Test script help
       run: |

@@ -52,6 +52,8 @@ reading:
   use_curl_data_first: true
   # CURL 数据缺失或无效时是否回退到本配置的 books（true=回退，false=不回退可能报错）
   fallback_to_config: true
+  # 连续阅读请求失败多少次后结束当前用户会话；环境变量：MAX_CONSECUTIVE_FAILURES
+  max_consecutive_failures: 5
   
   # 书籍配置列表
   # 章节索引优先级：配置的索引值 > CURL提取的值 > 自动计算的索引

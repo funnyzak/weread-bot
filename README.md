@@ -8,6 +8,8 @@
 
 WeRead Bot 是一个易用的微信读书自动阅读机器人，通过模拟真实用户阅读行为来积累阅读时长，支持多用户、多种运行模式（立即执行、定时任务、守护进程）、执行历史和多平台通知，适用于需要提升微信读书等级或完成阅读任务的用户场景。
 
+运行代码集中在 `weread-bot.py`。下载该文件并安装 `requirements.txt` 中的依赖即可运行。
+
 感谢 [findmover/wxread](https://github.com/findmover/wxread) 提供思路和部分代码支持。
 
 ## 适合哪些用户
@@ -182,6 +184,13 @@ python weread-bot.py --help
 - 历史记录只保存时间、状态、用户数、阅读统计和失败分类等摘要，不会保存 Cookie、请求头或原始 CURL。
 - 如果 `curl_config.users[].reading_overrides` 中存在不支持的键，程序会直接提示对应配置路径。
 - 如果 `curl_config.users[].cookie_refresh_ql` 不是布尔值，程序会直接提示对应配置路径。
+- 配置文件存在但无法读取、YAML语法错误、范围越界或类型错误时，程序会在发起网络请求前退出。
+
+退出码：
+
+- `0`：所有用户会话成功，或只读诊断命令正常结束。
+- `1`：配置错误、认证失败、运行失败或部分用户失败。
+- `130`：用户或系统中断。
 
 ### 方式六：Docker 方式运行
 
@@ -281,6 +290,7 @@ open config-generator.html
 | 阅读模式 | `READING_MODE` | `smart_random` | smart_random/sequential/pure_random |
 | 目标时长 | `TARGET_DURATION` | `60-70` | 目标阅读时长（分钟） |
 | 阅读间隔 | `READING_INTERVAL` | `25-35` | 每次请求间隔（秒） |
+| 连续失败上限 | `MAX_CONSECUTIVE_FAILURES` | `5` | 达到上限后结束当前用户会话并记为失败 |
 | 书籍连续性 | `BOOK_CONTINUITY` | `0.8` | 继续当前书籍的概率（0-1） |
 | 章节连续性 | `CHAPTER_CONTINUITY` | `0.7` | 顺序阅读章节的概率（0-1） |
 
@@ -361,6 +371,7 @@ history:
 说明：
 
 - `--validate-config` 与 `--dry-run` 不会写入历史，避免污染真实执行结果。
+- 每个真实会话结束后立即写一条历史。scheduled和daemon模式不会等主循环退出。
 - 历史文件内容损坏时，程序会记录警告并回退为空历史，不会阻断主流程。
 - 历史记录不会保存敏感请求数据，例如 Cookie、请求头和原始 CURL。
 
@@ -551,6 +562,7 @@ python weread-bot.py --mode immediate
 ```
 - 程序启动后立即开始一次阅读会话
 - 完成目标时长后自动退出
+- 会话失败或部分用户失败时返回退出码1
 - 适合单次使用或手动控制
 
 ### 定时执行模式（scheduled）
@@ -572,6 +584,8 @@ schedule:
 - `"30 9,18 * * *"` - 每天9:30和18:30执行（多时间点）
 - `"0 8,12,18 * * *"` - 每天8:00、12:00、18:00执行
 
+单次会话失败会写入历史，进程继续等待下一次cron时间。
+
 ### 守护进程模式（daemon）
 
 ```bash
@@ -588,6 +602,8 @@ daemon:
 
 - 程序持续运行，自动管理会话间隔
 - 支持每日会话次数限制
+- 每次已尝试会话都计入每日次数，失败也计数
+- 单次失败后按 `session_interval` 等待，进程继续运行
 - 自动处理跨天重置
 - 支持优雅关闭（Ctrl+C）
 
