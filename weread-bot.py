@@ -2303,15 +2303,15 @@ class NotificationService:
             logging.error("❌ Ntfy配置不完整（需要server和topic）")
             return False
 
-        # 构建Ntfy URL
-        ntfy_url = (f"{config['server'].rstrip('/')}/"
-                    f"{config['topic']}")
+        # 使用 JSON 发布，避免中文标题放入 HTTP 头时触发 Latin-1 编码错误
+        ntfy_url = config["server"].rstrip("/")
 
         try:
-            # 准备请求头
-            headers = {
-                "Content-Type": "text/plain; charset=utf-8",
-                "Title": "微信读书自动阅读报告"
+            headers = {}
+            payload = {
+                "topic": config["topic"],
+                "message": message,
+                "title": "微信读书自动阅读报告",
             }
 
             # 添加认证token（如果配置了）
@@ -2321,7 +2321,7 @@ class NotificationService:
             # 发送POST请求
             response = requests.post(
                 ntfy_url,
-                data=message.encode('utf-8'),
+                json=payload,
                 headers=headers,
                 timeout=10
             )
