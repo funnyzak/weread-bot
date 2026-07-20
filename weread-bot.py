@@ -1302,7 +1302,7 @@ class ConfigManager:
     def _get_bool_or_none(self, config_data: dict, yaml_path: str,
                            env_key: str) -> Optional[bool]:
         """获取布尔配置，可返回None"""
-        env_value = os.getenv(env_key)
+        env_value = self._get_env_override(env_key)
         yaml_value = self._get_nested_dict_value(config_data, yaml_path)
 
         value = env_value if env_value is not None else yaml_value
@@ -1311,11 +1311,18 @@ class ConfigManager:
 
         return parse_bool(value, yaml_path)
 
+    def _get_env_override(self, env_key: str) -> Optional[str]:
+        """读取环境变量；空字符串和纯空白不参与配置覆盖。"""
+        value = os.getenv(env_key)
+        if value is None or not value.strip():
+            return None
+        return value
+
     def _get_config_value(self, config_data: dict, yaml_path: str,
                           env_key: str, default: Any) -> Any:
         """获取配置值，优先级：环境变量 > YAML > 默认值"""
         # 先检查环境变量
-        env_value = os.getenv(env_key)
+        env_value = self._get_env_override(env_key)
         if env_value is not None:
             # 处理环境变量中的占位符
             env_value = self._resolve_env_placeholders(env_value, yaml_path)
@@ -1435,7 +1442,7 @@ class ConfigManager:
             channel_name, {}
         )
         for field_name, env_name in field_mapping.items():
-            env_value = os.getenv(env_name)
+            env_value = self._get_env_override(env_name)
             if env_value is None:
                 continue
             if channel_name == "gotify" and field_name == "priority":
@@ -1448,10 +1455,12 @@ class ConfigManager:
 
         if channel_name == "telegram":
             proxy_config = dict(config.get("proxy") or {})
-            if os.getenv("HTTP_PROXY"):
-                proxy_config["http"] = os.getenv("HTTP_PROXY")
-            if os.getenv("HTTPS_PROXY"):
-                proxy_config["https"] = os.getenv("HTTPS_PROXY")
+            http_proxy = self._get_env_override("HTTP_PROXY")
+            https_proxy = self._get_env_override("HTTPS_PROXY")
+            if http_proxy is not None:
+                proxy_config["http"] = http_proxy
+            if https_proxy is not None:
+                proxy_config["https"] = https_proxy
             if proxy_config:
                 config["proxy"] = proxy_config
 
@@ -1514,7 +1523,7 @@ class ConfigManager:
 
         # 2) 回退：WEREAD_CURL_STRING 按“至少两个空行”拆分为多用户
         if not users:
-            curl_env = os.getenv("WEREAD_CURL_STRING", "")
+            curl_env = self._get_env_override("WEREAD_CURL_STRING")
             if curl_env:
                 import re
                 segments = [seg.strip() for seg in re.split(r'(?:\r?\n\s*){2,}', curl_env) if seg.strip()]

@@ -161,6 +161,72 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(gotify_override["priority"], 3)
         self.assertEqual(gotify_override["title"], "yaml-title")
 
+    def test_empty_environment_values_fall_back_to_yaml_or_default(self):
+        manager = object.__new__(self.bot.ConfigManager)
+        config_data = {
+            "reading": {"mode": "sequential"},
+            "notification": {"only_on_failure": True},
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "READING_MODE": "",
+                "STARTUP_MODE": "   ",
+                "NOTIFICATION_ONLY_ON_FAILURE": "",
+            },
+            clear=True,
+        ):
+            self.assertEqual(
+                manager._get_config_value(
+                    config_data,
+                    "reading.mode",
+                    "READING_MODE",
+                    "smart_random",
+                ),
+                "sequential",
+            )
+            self.assertEqual(
+                manager._get_config_value(
+                    config_data,
+                    "app.startup_mode",
+                    "STARTUP_MODE",
+                    "immediate",
+                ),
+                "immediate",
+            )
+            self.assertTrue(
+                manager._get_bool_or_none(
+                    config_data,
+                    "notification.only_on_failure",
+                    "NOTIFICATION_ONLY_ON_FAILURE",
+                )
+            )
+
+    def test_empty_notification_environment_values_are_ignored(self):
+        manager = object.__new__(self.bot.ConfigManager)
+        with patch.dict(
+            os.environ,
+            {
+                "GOTIFY_SERVER": "https://gotify.test",
+                "GOTIFY_TOKEN": "fake-gotify-token",
+                "GOTIFY_PRIORITY": "",
+                "GOTIFY_TITLE": "   ",
+                "BARK_SOUND": "",
+            },
+            clear=True,
+        ):
+            channels = manager._create_channels_from_env_vars()
+            gotify_override = manager._apply_env_overrides_to_channel(
+                "gotify", {"priority": 7, "title": "yaml-title"}
+            )
+
+        by_name = {channel.name: channel for channel in channels}
+        self.assertNotIn("priority", by_name["gotify"].config)
+        self.assertNotIn("title", by_name["gotify"].config)
+        self.assertEqual(gotify_override["priority"], 7)
+        self.assertEqual(gotify_override["title"], "yaml-title")
+
     def test_auto_reading_workflow_passes_failure_limit_secret(self):
         workflow_path = (
             Path(__file__).resolve().parents[1]
