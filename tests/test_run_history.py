@@ -54,6 +54,30 @@ class RunHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(record["final_status"], "cancelled")
         self.assertEqual(record["cancelled_users"], 1)
 
+    def test_cancelled_status_is_rendered_in_chinese(self):
+        summary = self.bot.format_last_run_summary(
+            {
+                "final_status": "cancelled",
+                "cancelled_users": 1,
+            }
+        )
+
+        self.assertIn("最终状态: 已取消", summary)
+
+    def test_runtime_error_message_is_redacted_in_history(self):
+        record = self.bot.build_run_history_record(
+            self.bot.WeReadConfig(),
+            "normal",
+            runtime_error=RuntimeError(
+                "request failed: token=unique-history-secret"
+            ),
+        )
+
+        self.assertNotIn(
+            "unique-history-secret",
+            record.get("error_message", ""),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

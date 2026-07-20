@@ -1,4 +1,6 @@
 import asyncio
+import io
+import json
 import logging
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -27,6 +29,51 @@ class LogRedactionTests(unittest.IsolatedAsyncioTestCase):
             "Cookie: wr_skey=skey-super-secret; other=value"
         )
         self.assertNotIn("skey-super-secret", text)
+
+    def test_json_formatter_redacts_sensitive_message(self):
+        stream = io.StringIO()
+        handler = logging.StreamHandler(stream)
+        handler.addFilter(self.bot.LogContextFilter())
+        handler.setFormatter(self.bot.JsonLogFormatter())
+        logger = logging.getLogger(f"redaction-test-{id(self)}")
+        logger.handlers = [handler]
+        logger.propagate = False
+        logger.setLevel(logging.INFO)
+
+        logger.error("request failed: token=unique-sensitive-token")
+
+        payload = json.loads(stream.getvalue())
+        self.assertNotIn("unique-sensitive-token", payload["message"])
+
+    def test_missing_identity_warning_does_not_echo_other_identity(self):
+        session = object.__new__(self.bot.WeReadSessionManager)
+        session.user_name = "alice"
+        session.data = {
+            "ps": "N/A",
+            "pc": "unique-sensitive-pc",
+            "appId": "safe-app-id",
+        }
+
+        with self.assertLogs(level=logging.WARNING) as captured:
+            session._validate_and_log_user_identity()
+
+        self.assertNotIn("unique-sensitive-pc", "\n".join(captured.output))
+
+    def test_context_filter_does_not_mutate_shared_log_record(self):
+        record = logging.LogRecord(
+            name="shared-record",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="request failed: token=%s",
+            args=("unique-shared-secret",),
+            exc_info=None,
+        )
+
+        self.bot.LogContextFilter().filter(record)
+
+        self.assertEqual(record.msg, "request failed: token=%s")
+        self.assertEqual(record.args, ("unique-shared-secret",))
 
     def test_curl_validation_does_not_echo_short_identity_values(self):
         errors = self.bot.CurlParser.validate_curl_headers(

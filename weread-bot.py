@@ -41,6 +41,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import math
 import time
 import random
 import hashlib
@@ -95,6 +96,8 @@ class LogContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         record.user = CURRENT_USER.get()
         record.session_id = CURRENT_SESSION_ID.get()
+        record.msg = redact_for_log(record.getMessage())
+        record.args = ()
         return True
 
 
@@ -106,7 +109,7 @@ class JsonLogFormatter(logging.Formatter):
             "timestamp": self.formatTime(record, self.datefmt),
             "level": record.levelname,
             "event": getattr(record, "event", record.name),
-            "message": record.getMessage(),
+            "message": redact_for_log(record.getMessage()),
             "user": getattr(record, "user", CURRENT_USER.get()),
             "session_id": getattr(
                 record, "session_id", CURRENT_SESSION_ID.get()
@@ -120,10 +123,10 @@ class JsonLogFormatter(logging.Formatter):
                 payload[name] = value
         if record.exc_info:
             payload["exception_type"] = record.exc_info[0].__name__
-            payload["exception"] = str(record.exc_info[1])
+            payload["exception"] = redact_for_log(str(record.exc_info[1]))
             if logging.getLogger().isEnabledFor(logging.DEBUG):
-                payload["traceback"] = "".join(
-                    traceback.format_exception(*record.exc_info)
+                payload["traceback"] = redact_for_log(
+                    "".join(traceback.format_exception(*record.exc_info))
                 )
         return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
@@ -570,7 +573,7 @@ class ReadingSession:
     user_name: str = "默认用户"
     start_time: datetime = field(default_factory=datetime.now)
     end_time: Optional[datetime] = None
-    target_duration_minutes: int = 0
+    target_duration_minutes: float = 0.0
     actual_duration_seconds: int = 0
     successful_reads: int = 0
     failed_reads: int = 0
@@ -611,7 +614,7 @@ class ReadingSession:
 👤 用户名称: {self.user_name}
 ⏰ 开始时间: {self.start_time.strftime('%Y-%m-%d %H:%M:%S')}
 ⏱️ 实际阅读: {self.actual_duration_formatted}
-🎯 目标时长: {self.target_duration_minutes}分钟
+🎯 目标时长: {self.target_duration_minutes:g}分钟
 ✅ 成功请求: {self.successful_reads}次
 ❌ 失败请求: {self.failed_reads}次
 📈 成功率: {self.success_rate:.1f}%
@@ -778,6 +781,8 @@ def parse_float(
         parsed = float(str(value).strip())
     except (TypeError, ValueError) as exc:
         raise _config_error(path, "必须是数字", value) from exc
+    if not math.isfinite(parsed):
+        raise _config_error(path, "必须是有限数字", value)
     if minimum is not None and parsed < minimum:
         raise _config_error(path, f"必须大于或等于 {minimum}", value)
     if maximum is not None and parsed > maximum:
@@ -800,6 +805,8 @@ def parse_range(
         raise _config_error(path, "必须是数字或 min-max 范围", value)
     lower = float(match.group(1))
     upper = float(match.group(2)) if match.group(2) is not None else lower
+    if not math.isfinite(lower) or not math.isfinite(upper):
+        raise _config_error(path, "必须是有限范围", value)
     effective_minimum = minimum
     if not allow_zero:
         effective_minimum = max(minimum or 0.0, 0.000000001)
@@ -952,9 +959,24 @@ class ConfigManager:
                 logging.info(f"✅ 已加载配置文件: {self.config_path}")
             except ConfigError:
                 raise
+            except yaml.YAMLError as exc:
+                mark = getattr(exc, "problem_mark", None)
+                location = "未知位置"
+                if mark is not None:
+                    location = f"第 {mark.line + 1} 行，第 {mark.column + 1} 列"
+                raise ConfigError(
+                    "config: YAML 解析失败，"
+                    f"错误类型={type(exc).__name__}，位置={location}"
+                ) from exc
+            except OSError as exc:
+                raise ConfigError(
+                    "config: 配置文件无法读取，"
+                    f"错误类型={type(exc).__name__}"
+                ) from exc
             except Exception as e:
                 raise ConfigError(
-                    f"config: 配置文件读取或 YAML 解析失败，当前值={e}"
+                    "config: 配置文件读取或 YAML 解析失败，"
+                    f"错误类型={type(e).__name__}"
                 ) from e
 
         # 从环境变量获取配置（优先级最高）
@@ -2927,7 +2949,7 @@ class WeReadApplication:
         logging.info("🚀 启动模式: 立即执行")
         return await self.run_single_session()
 
-    async def _run_scheduled_mode(self):
+    async def _run_scheduled_mode(self) -> RunResult:
         """定时执行模式"""
         logging.info("🚀 启动模式: 定时执行")
 
@@ -2988,14 +3010,17 @@ class WeReadApplication:
             if self.is_shutdown_requested():
                 break
 
-            last_result = await self.run_single_session()
+            try:
+                last_result = await self.run_single_session()
+            except Exception as exc:
+                last_result = self._record_persistent_runtime_failure(exc)
             if last_result.final_status != "success":
                 logging.warning("本次失败，常驻进程继续等待下一次执行")
 
         logging.info("👋 定时任务已停止")
         return last_result
 
-    async def _run_daemon_mode(self):
+    async def _run_daemon_mode(self) -> RunResult:
         """守护进程模式"""
         logging.info("🚀 启动模式: 守护进程")
 
@@ -3022,36 +3047,56 @@ class WeReadApplication:
                 await self._wait_until_next_day()
                 continue
 
-            # 执行阅读会话
             try:
                 last_result = await self.run_single_session()
+            except Exception as exc:
+                last_result = self._record_persistent_runtime_failure(exc)
+            finally:
                 WeReadApplication._daily_session_count += 1
 
-                if last_result.final_status == "cancelled":
-                    break
-                if last_result.final_status != "success":
-                    logging.warning("本次失败，常驻进程继续")
+            if last_result.final_status == "cancelled":
+                break
+            if last_result.final_status != "success":
+                logging.warning("本次失败，常驻进程继续")
 
-                # 如果没有请求关闭，等待下一次会话
-                if not self.is_shutdown_requested():
-                    interval_minutes = RandomHelper.get_random_int_from_range(
-                        self.config.daemon.session_interval
-                    )
-                    logging.info(
-                        f"😴 守护进程等待 {interval_minutes} 分钟后执行下一次会话..."
-                    )
-
-                    await interruptible_sleep(
-                        interval_minutes * 60,
-                        self.is_shutdown_requested,
-                    )
-
-            except Exception as e:
-                logging.error(f"❌ 守护进程会话执行失败: {e}")
-                WeReadApplication._daily_session_count += 1
+            if not self.is_shutdown_requested():
+                interval_minutes = RandomHelper.get_random_from_range(
+                    self.config.daemon.session_interval
+                )
+                logging.info(
+                    f"😴 守护进程等待 {interval_minutes:g} "
+                    "分钟后执行下一次会话..."
+                )
+                await interruptible_sleep(
+                    interval_minutes * 60,
+                    self.is_shutdown_requested,
+                )
 
         logging.info("👋 守护进程已停止")
         return last_result
+
+    def _record_persistent_runtime_failure(
+        self, exc: Exception
+    ) -> RunResult:
+        """记录常驻模式中未转换为 RunResult 的异常。"""
+        category = classify_runtime_error(exc)
+        user_count = len(self.config.users) if self.config.users else 1
+        result = RunResult(
+            final_status="failed",
+            user_count=user_count,
+            failed_users=user_count,
+            failure_categories={category.value: user_count},
+            continue_on_failure=True,
+        )
+        logging.error(format_error_message("❌ 常驻会话执行失败", exc))
+        persist_run_history(
+            self.config,
+            self.execution_type,
+            run_summary=result.to_summary_dict(),
+            runtime_error=exc,
+            error_category=category,
+        )
+        return result
 
     async def _wait_until_next_day(self):
         """等待到第二天"""
@@ -3345,6 +3390,7 @@ class WeReadSessionManager:
         self.cookies = {}
         self.data = self.DEFAULT_DATA.copy()
         self.session_user_agent = None  # 会话级别的User-Agent
+        self._last_read_error_category = None
 
         self._load_curl_config()
         self._initialize_session_user_agent()
@@ -3481,7 +3527,8 @@ class WeReadSessionManager:
         if ps_value == 'N/A' or pc_value == 'N/A':
             logging.warning(
                 f"⚠️ 用户 {self.user_name} 缺少关键身份标识符: "
-                f"ps={ps_value}, pc={pc_value}"
+                f"ps={_secret_marker(ps_value)}, "
+                f"pc={_secret_marker(pc_value)}"
             )
         
         # 保存用户特定的身份标识符，确保在整个会话期间保持不变
@@ -3525,7 +3572,16 @@ class WeReadSessionManager:
         chapter_ci: Optional[int] = None,
     ):
         """集中处理阅读起点与章节索引兼容逻辑"""
-        self.reading_manager.set_curl_data(book_id or "", chapter_id or "")
+        initialized = self.reading_manager.set_curl_data(
+            book_id or "", chapter_id or ""
+        )
+        if not initialized:
+            raise ValueError(
+                self._build_protocol_error(
+                    "阅读位置初始化失败",
+                    "CURL 位置不可用且配置回退失败",
+                )
+            )
         if (self.reading_manager.current_chapter_ci is None
                 and chapter_ci is not None):
             self.reading_manager.current_chapter_ci = chapter_ci
@@ -3627,6 +3683,13 @@ class WeReadSessionManager:
         is_cancelled = self._is_cancelled
         monotonic = getattr(self, "_monotonic", time.monotonic)
         result: Optional[SessionResult] = None
+        started_monotonic: Optional[float] = None
+
+        def refresh_duration() -> None:
+            if started_monotonic is None:
+                return
+            elapsed = max(0.0, monotonic() - started_monotonic)
+            self.session_stats.actual_duration_seconds = int(elapsed)
 
         try:
             logging.info(f"🚀 微信读书阅读机器人启动{user_info}")
@@ -3646,17 +3709,13 @@ class WeReadSessionManager:
                 )
                 return result
 
-            target_minutes = RandomHelper.get_random_int_from_range(
+            target_minutes = RandomHelper.get_random_from_range(
                 self.effective_reading_config.target_duration
             )
             self.session_stats.start_time = datetime.now()
             self.session_stats.target_duration_minutes = target_minutes
             started_monotonic = monotonic()
             deadline = started_monotonic + target_minutes * 60
-
-            def refresh_duration() -> None:
-                elapsed = max(0.0, monotonic() - started_monotonic)
-                self.session_stats.actual_duration_seconds = int(elapsed)
 
             logging.info(f"🎯 本次目标阅读时长: {target_minutes} 分钟")
 
@@ -3667,7 +3726,16 @@ class WeReadSessionManager:
                 )
                 return result
 
-            if not await self._refresh_cookie():
+            cookie_refreshed = await self._refresh_cookie()
+            refresh_duration()
+            if is_cancelled():
+                result = SessionResult(
+                    SessionStatus.CANCELLED,
+                    self.session_stats,
+                    message="Cookie 刷新期间收到关闭信号",
+                )
+                return result
+            if not cookie_refreshed:
                 result = SessionResult(
                     SessionStatus.FAILED,
                     self.session_stats,
@@ -3679,6 +3747,7 @@ class WeReadSessionManager:
 
             last_time = int(time.time()) - 30
             consecutive_failures = 0
+            last_failure_category: Optional[RuntimeErrorCategory] = None
             max_failures = self.effective_reading_config.max_consecutive_failures
 
             while monotonic() < deadline:
@@ -3718,6 +3787,7 @@ class WeReadSessionManager:
                     if success:
                         self.session_stats.successful_reads += 1
                         consecutive_failures = 0
+                        last_failure_category = None
                         last_time = int(time.time())
                         logging.info(
                             "✅ 阅读成功，进度: %s分钟 / %s分钟",
@@ -3727,16 +3797,30 @@ class WeReadSessionManager:
                     else:
                         self.session_stats.failed_reads += 1
                         consecutive_failures += 1
+                        last_failure_category = getattr(
+                            self,
+                            "_last_read_error_category",
+                            None,
+                        ) or RuntimeErrorCategory.PROTOCOL
                 except Exception as exc:
                     logging.error("❌ 阅读请求异常: %s", exc)
                     self.session_stats.failed_reads += 1
                     consecutive_failures += 1
+                    last_failure_category = classify_runtime_error(exc)
+
+                if is_cancelled():
+                    result = SessionResult(
+                        SessionStatus.CANCELLED,
+                        self.session_stats,
+                        message="阅读请求期间收到关闭信号",
+                    )
+                    break
 
                 if consecutive_failures >= max_failures:
                     result = SessionResult(
                         SessionStatus.FAILED,
                         self.session_stats,
-                        RuntimeErrorCategory.PROTOCOL,
+                        last_failure_category or RuntimeErrorCategory.PROTOCOL,
                         f"连续阅读失败达到上限 {max_failures} 次",
                     )
                     break
@@ -3775,6 +3859,7 @@ class WeReadSessionManager:
 
             return result
         except Exception as exc:
+            refresh_duration()
             self.session_stats.end_time = datetime.now()
             result = SessionResult(
                 SessionStatus.FAILED,
@@ -3785,6 +3870,7 @@ class WeReadSessionManager:
             await self._notify_session_result(result)
             return result
         finally:
+            refresh_duration()
             if self.session_stats.end_time is None:
                 self.session_stats.end_time = datetime.now()
             await self.http_client.close()
@@ -3889,11 +3975,16 @@ class WeReadSessionManager:
                 "阅读响应字段: %s",
                 ", ".join(sorted(response_data.keys())),
             )
-            return await self._handle_protocol_response(
+            result = await self._handle_protocol_response(
                 response_data, response_time
             )
+            self._last_read_error_category = (
+                None if result[0] else RuntimeErrorCategory.PROTOCOL
+            )
+            return result
 
         except Exception as e:
+            self._last_read_error_category = classify_runtime_error(e)
             logging.error(
                 format_error_message(
                     self._build_protocol_error(
@@ -4079,7 +4170,7 @@ def build_run_history_record(
             )
         )
         record["error_category"] = normalized_category
-        record["error_message"] = str(runtime_error)[:200]
+        record["error_message"] = redact_for_log(str(runtime_error))[:200]
         if not record["failure_categories"]:
             record["failure_categories"] = {normalized_category: 1}
 
@@ -4167,6 +4258,7 @@ def format_last_run_summary(last_record: Optional[Dict[str, Any]]) -> str:
         "success": "成功",
         "failed": "失败",
         "partial_success": "部分成功",
+        "cancelled": "已取消",
         "skipped": "已跳过",
     }
     failure_categories = last_record.get("failure_categories") or {}
@@ -4225,6 +4317,7 @@ def build_runtime_summary(
         "success": "成功",
         "failed": "失败",
         "partial_success": "部分成功",
+        "cancelled": "已取消",
         "skipped": "已跳过",
     }
     effective_user_count = len(config.users) if config.users else 1
@@ -4698,7 +4791,7 @@ def parse_arguments(argv: Optional[List[str]] = None):
     return parser.parse_args(argv)
 
 
-async def _validate_curl_configs(config: WeReadConfig):
+async def _validate_curl_configs(config: WeReadConfig) -> None:
     """验证全部 CURL 来源，不发起网络请求。"""
     if config.users:
         logging.info("🔍 验证多用户CURL配置，共 %s 个用户", len(config.users))
@@ -4708,6 +4801,7 @@ async def _validate_curl_configs(config: WeReadConfig):
                 user.file_path,
                 user.content,
                 f"curl_config.users[{index}]",
+                user,
             )
             for index, user in enumerate(config.users)
         ]
@@ -4718,10 +4812,11 @@ async def _validate_curl_configs(config: WeReadConfig):
                 config.curl_file_path,
                 config.curl_content,
                 "curl_config",
+                None,
             )
         ]
 
-    for user_name, file_path, inline_content, source_path in sources:
+    for user_name, file_path, inline_content, source_path, user_config in sources:
         curl_content = load_curl_source(
             file_path, inline_content, source_path
         )
@@ -4753,7 +4848,29 @@ async def _validate_curl_configs(config: WeReadConfig):
                 f"{source_path}: CURL 校验失败\n{error_details}"
             )
 
+        overrides = user_config.reading_overrides if user_config else {}
+        use_curl_position = overrides.get(
+            "use_curl_data_first", config.reading.use_curl_data_first
+        )
+        fallback_to_books = overrides.get(
+            "fallback_to_config", config.reading.fallback_to_config
+        )
+        has_curl_position = bool(curl_data.get("b") and curl_data.get("c"))
+        has_book_position = any(
+            book.book_id and book.chapters for book in config.reading.books
+        )
+        if not (
+            (use_curl_position and has_curl_position)
+            or (fallback_to_books and has_book_position)
+        ):
+            raise ConfigError(
+                f"{source_path}: 没有可用阅读位置；"
+                "请在 CURL 中提供 b/c，或配置可回退的 books"
+            )
+
     logging.info("✅ 所有CURL配置验证通过")
+
+
 async def main() -> int:
     """主函数"""
     # 解析命令行参数
@@ -4861,20 +4978,17 @@ async def main() -> int:
                 error_category=classify_runtime_error(e),
             )
 
-        # 尝试发送错误通知
-        try:
-            config_manager = ConfigManager(
-                args.config if 'args' in locals() else "config.yaml"
-            )
-            notification_service = NotificationService(
-                config_manager.config.notification
-            )
-            await notification_service.send_notification_async(
-                error_msg,
-                event=NotificationEvent.RUNTIME_ERROR
-            )
-        except Exception:
-            pass
+        if execution_mode == "normal" and run_started:
+            try:
+                notification_service = NotificationService(
+                    config.notification
+                )
+                await notification_service.send_notification_async(
+                    error_msg,
+                    event=NotificationEvent.RUNTIME_ERROR
+                )
+            except Exception:
+                pass
         return 1
 
 if __name__ == "__main__":

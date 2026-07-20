@@ -69,6 +69,15 @@ class ProtocolStateTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.user_pc, "pc1")
         session.reading_manager.set_curl_data.assert_called_once_with("", "")
 
+    def test_protocol_position_fails_when_no_position_can_be_initialized(self):
+        session = object.__new__(self.bot.WeReadSessionManager)
+        session.user_name = "alice"
+        session.reading_manager = unittest.mock.MagicMock()
+        session.reading_manager.set_curl_data.return_value = False
+
+        with self.assertRaisesRegex(ValueError, "阅读位置初始化失败"):
+            session._apply_protocol_reading_position("book", "chapter", 1)
+
     def test_prepare_payload_removes_stale_ci(self):
         session = object.__new__(self.bot.WeReadSessionManager)
         session.data = self.bot.WeReadSessionManager.DEFAULT_DATA.copy()

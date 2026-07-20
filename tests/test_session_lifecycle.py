@@ -130,6 +130,67 @@ class SessionLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(manager.http_client.close_calls, 1)
 
+    async def test_network_failures_keep_network_error_category(self):
+        def network_failure():
+            raise TimeoutError("offline")
+
+        manager = self._manager([network_failure] * 5, FakeClock())
+
+        with self.assertLogs(level="ERROR"):
+            result = await manager.start_reading_session()
+
+        self.assertEqual(result.status, self.bot.SessionStatus.FAILED)
+        self.assertEqual(
+            result.error_category,
+            self.bot.RuntimeErrorCategory.NETWORK,
+        )
+
+    async def test_shutdown_during_cookie_refresh_is_cancelled(self):
+        clock = FakeClock()
+        manager = self._manager([], clock)
+
+        async def refresh_cookie():
+            clock.advance(7)
+            self.cancelled = True
+            return False
+
+        manager._refresh_cookie = refresh_cookie
+
+        result = await manager.start_reading_session()
+
+        self.assertEqual(result.status, self.bot.SessionStatus.CANCELLED)
+        self.assertEqual(result.stats.actual_duration_seconds, 7)
+        self.assertEqual(manager.notification_service.events, [])
+
+    async def test_shutdown_during_fifth_failure_wins_over_failure_limit(self):
+        def final_failure():
+            self.cancelled = True
+            return False, 0.01
+
+        manager = self._manager(
+            [False, False, False, False, final_failure],
+            FakeClock(),
+        )
+
+        result = await manager.start_reading_session()
+
+        self.assertEqual(result.status, self.bot.SessionStatus.CANCELLED)
+        self.assertEqual(manager.notification_service.events, [])
+
+    async def test_fractional_target_duration_is_not_truncated_to_zero(self):
+        clock = FakeClock()
+
+        def successful_read():
+            clock.advance(30)
+            return True, 0.01
+
+        manager = self._manager([successful_read], clock, target="0.5")
+
+        result = await manager.start_reading_session()
+
+        self.assertEqual(result.status, self.bot.SessionStatus.SUCCESS)
+        self.assertEqual(result.stats.actual_duration_seconds, 30)
+
 
 if __name__ == "__main__":
     unittest.main()

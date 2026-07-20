@@ -1,3 +1,4 @@
+import asyncio
 import os
 import tempfile
 import unittest
@@ -33,6 +34,20 @@ class ConfigValidationTests(unittest.TestCase):
         path = self._config_file("reading: [unterminated\n")
         with self.assertRaises(self.bot.ConfigError):
             self.bot.ConfigManager(path)
+
+    def test_yaml_syntax_error_does_not_echo_sensitive_source_line(self):
+        secret = "unique-sensitive-yaml-token"
+        path = self._config_file(
+            "notification:\n"
+            "  channels:\n"
+            "    - name: pushplus\n"
+            f"      config: {{token: *{secret}}}\n"
+        )
+
+        with self.assertRaises(self.bot.ConfigError) as captured:
+            self.bot.ConfigManager(path)
+
+        self.assertNotIn(secret, str(captured.exception))
 
     def test_boolean_parser_accepts_known_values_and_rejects_other_text(self):
         for value in (True, "TRUE", "false", "1", "0", "yes", "No", "on", "OFF"):
@@ -146,6 +161,18 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(gotify_override["priority"], 3)
         self.assertEqual(gotify_override["title"], "yaml-title")
 
+    def test_auto_reading_workflow_passes_failure_limit_secret(self):
+        workflow_path = (
+            Path(__file__).resolve().parents[1]
+            / ".github"
+            / "workflows"
+            / "auto-reading.yml"
+        )
+
+        workflow = workflow_path.read_text(encoding="utf-8")
+
+        self.assertIn("MAX_CONSECUTIVE_FAILURES:", workflow)
+
     def test_chapter_index_zero_is_preserved(self):
         path = self._config_file(
             "reading:\n"
@@ -175,6 +202,49 @@ class ConfigValidationTests(unittest.TestCase):
             self.bot.parse_range("0-1", "reading.target_duration", minimum=0.000001)
         with self.assertRaisesRegex(self.bot.ConfigError, "probability"):
             self.bot.parse_float(1.1, "probability", minimum=0, maximum=1)
+
+    def test_float_parser_rejects_nan(self):
+        with self.assertRaisesRegex(self.bot.ConfigError, "probability"):
+            self.bot.parse_float("nan", "probability", minimum=0, maximum=1)
+
+    def test_range_parser_rejects_infinite_values(self):
+        huge_number = "9" * 1000
+        with self.assertRaisesRegex(self.bot.ConfigError, "target_duration"):
+            self.bot.parse_range(
+                huge_number,
+                "reading.target_duration",
+                minimum=0.000001,
+            )
+
+    def test_validate_curl_rejects_missing_reading_position_without_books(self):
+        config = self.bot.WeReadConfig(
+            curl_content=(
+                "curl 'https://weread.qq.com/web/book/read' "
+                "-H 'User-Agent: Mozilla/5.0' "
+                "-H 'Cookie: wr_skey=fake-long-key' "
+                "--data-raw '{\"appId\":\"app1\",\"ps\":\"ps11\","
+                "\"pc\":\"pc11\"}'"
+            )
+        )
+
+        with self.assertRaisesRegex(self.bot.ConfigError, "阅读位置"):
+            asyncio.run(self.bot._validate_curl_configs(config))
+
+    def test_validate_curl_requires_books_when_curl_position_is_disabled(self):
+        config = self.bot.WeReadConfig(
+            curl_content=(
+                "curl 'https://weread.qq.com/web/book/read' "
+                "-H 'User-Agent: Mozilla/5.0' "
+                "-H 'Cookie: wr_skey=fake-long-key' "
+                "--data-raw '{\"appId\":\"app1\",\"ps\":\"ps11\","
+                "\"pc\":\"pc11\",\"b\":\"book-position\","
+                "\"c\":\"chapter-position\"}'"
+            )
+        )
+        config.reading.use_curl_data_first = False
+
+        with self.assertRaisesRegex(self.bot.ConfigError, "阅读位置"):
+            asyncio.run(self.bot._validate_curl_configs(config))
 
     def test_invalid_modes_and_logging_values_fail_during_load(self):
         cases = [
