@@ -5,7 +5,7 @@ from __future__ import annotations
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.3.8
+    版本: 0.3.9
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -82,7 +82,7 @@ except ImportError:
     croniter = None
 from zoneinfo import ZoneInfo
 
-VERSION = "0.3.8"
+VERSION = "0.3.9"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 CURRENT_USER = ContextVar("weread_user", default="system")
