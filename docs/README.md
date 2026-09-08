@@ -32,6 +32,11 @@
 - 入口：[README 中的部署方式](../README.md#部署方式)
 - 适合：服务器常驻运行、容器化部署
 
+### 青龙面板
+
+- 入口：[青龙面板部署指南](./qinglong-guide.md)
+- 适合：使用青龙定时运行，配置单账号、多账号及用户独立阅读参数
+
 ### 排错和自检
 
 - 入口：[README 中的自检与排错](../README.md#自检与排错)
@@ -44,6 +49,7 @@
 
 - [README](../README.md)：项目介绍、快速开始、常用命令、部署入口
 - [GitHub Action 自动阅读配置指南](./github-action-autoread-guide.md)：云端运行、Secrets 配置、工作流说明
+- [青龙面板部署指南](./qinglong-guide.md)：面板部署、账号配置、定时任务与排错
 - [配置模板](../config.yaml.example)：完整配置字段示例
 
 ## 维护说明
