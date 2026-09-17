@@ -132,7 +132,7 @@ history:
 
 - YAML 中有 `curl_config.users` 时，优先使用该用户列表，不再从 `WEREAD_CURL_STRING` 生成用户。
 - 全局参数按“环境变量 → YAML → 默认值”取值；用户的 `reading_overrides` 再覆盖全局阅读参数。例如账号二明确配置了 `60-90`，全局 `TARGET_DURATION` 不会改变它。
-- 用户可覆盖的阅读字段见 [多用户配置](../README.md#多用户配置)。可在用户条目下添加 `cookie_refresh_ql: true` 或 `false`；它控制微信读书 Cookie 刷新请求的字段，与是否部署在青龙面板无关。
+- 用户可覆盖的阅读字段见 [多用户配置](../README.md#多用户配置)。可在用户条目下添加 `cookie_refresh_ql: true` 或 `false`，指定微信读书 Cookie 刷新的首选值；失败时程序会自动尝试其他兼容形式。该配置与是否部署在青龙面板无关。
 - 账号文件、YAML、日志和历史使用绝对路径，避免工作目录变化。个人配置放在 `/ql/data/config/`，不要放进订阅更新的仓库目录。
 
 ## 校验配置与创建定时任务

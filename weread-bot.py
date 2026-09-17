@@ -5,7 +5,7 @@ from __future__ import annotations
 
 项目信息:
     名称: WeRead Bot
-    版本: 0.3.9
+    版本: 0.3.10
     作者: funnyzak
     仓库: https://github.com/funnyzak/weread-bot
     许可: MIT License
@@ -83,7 +83,7 @@ except ImportError:
     croniter = None
 from zoneinfo import ZoneInfo
 
-VERSION = "0.3.9"
+VERSION = "0.3.10"
 REPO = "https://github.com/funnyzak/weread-bot"
 
 CURRENT_USER = ContextVar("weread_user", default="system")
@@ -3415,12 +3415,6 @@ class WeReadSessionManager:
         )
         self.session_stats = ReadingSession(user_name=self.user_name)
 
-        # 动态创建 cookie 数据，优先使用用户级 ql 配置
-        self.cookie_data = {
-            "rq": "%2Fweb%2Fbook%2Fread",
-            "ql": self._resolve_cookie_refresh_ql(),
-        }
-
         self.headers = {}
         self.cookies = {}
         self.data = self.DEFAULT_DATA.copy()
@@ -3431,11 +3425,21 @@ class WeReadSessionManager:
         self._initialize_session_user_agent()
 
     def _resolve_cookie_refresh_ql(self) -> bool:
-        """解析当前用户会话的 Cookie 刷新 ql 配置"""
+        """解析当前用户会话首选的 Cookie 刷新 ql 配置。"""
         if (self.user_config
                 and isinstance(self.user_config.cookie_refresh_ql, bool)):
             return self.user_config.cookie_refresh_ql
         return self.config.hack.cookie_refresh_ql
+
+    def _build_cookie_refresh_payloads(self) -> List[Dict[str, Any]]:
+        """按首选值、相反值和省略 ql 的顺序生成刷新请求体。"""
+        preferred_ql = self._resolve_cookie_refresh_ql()
+        request_path = "%2Fweb%2Fbook%2Fread"
+        return [
+            {"rq": request_path, "ql": preferred_ql},
+            {"rq": request_path, "ql": not preferred_ql},
+            {"rq": request_path},
+        ]
 
     def _apply_reading_overrides(
         self, base_config: ReadingConfig, user_config: UserConfig
@@ -4032,45 +4036,53 @@ class WeReadSessionManager:
             return False, 0.0
 
     async def _refresh_cookie(self) -> bool:
-        """刷新cookie"""
+        """使用兼容参数依次尝试刷新 Cookie。"""
         logging.info("🍪 刷新cookie...")
 
-        try:
-            response, _ = await self.http_client.post_raw(
-                self.RENEW_URL,
-                headers=self.headers,
-                cookies=self.cookies,
-                json_data=self.cookie_data
-            )
+        payloads = self._build_cookie_refresh_payloads()
+        for attempt, payload in enumerate(payloads, start=1):
+            ql_value = payload.get("ql", "未传")
+            try:
+                response, _ = await self.http_client.post_raw(
+                    self.RENEW_URL,
+                    headers=self.headers,
+                    cookies=self.cookies,
+                    json_data=payload,
+                )
+            except Exception as exc:
+                logging.warning(
+                    "Cookie刷新请求失败，尝试 %s/%s，ql=%s: %s",
+                    attempt,
+                    len(payloads),
+                    ql_value,
+                    exc,
+                )
+                continue
 
             new_skey = self._extract_wr_skey_from_response(response)
-
             if not new_skey:
-                logging.error(
-                    self._build_protocol_error(
-                        "Cookie 刷新失败",
-                        "响应中未找到 wr_skey，可能是 Cookie 已失效或接口返回结构变更",
-                    )
+                logging.warning(
+                    "Cookie刷新未返回 wr_skey，尝试 %s/%s，ql=%s",
+                    attempt,
+                    len(payloads),
+                    ql_value,
                 )
-                return False
+                continue
 
             self.cookies['wr_skey'] = new_skey
             logging.info(
-                "✅ Cookie刷新成功，新密钥: %s", _secret_marker(new_skey)
+                "✅ Cookie刷新成功，ql=%s，新密钥: %s",
+                ql_value,
+                _secret_marker(new_skey),
             )
             return True
 
-        except Exception as e:
-            logging.error(
-                format_error_message(
-                    self._build_protocol_error(
-                        "Cookie 刷新请求失败",
-                        "请检查网络状态、认证信息或 renewal 接口兼容性",
-                    ),
-                    e,
-                )
+        logging.error(
+            self._build_protocol_error(
+                "Cookie 刷新失败",
+                "所有 ql 参数形式均未返回 wr_skey，Cookie 可能已经失效",
             )
-
+        )
         return False
 
     async def _fix_no_synckey(self):

@@ -30,6 +30,24 @@ class ProtocolStateTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    def _cookie_response(self, wr_skey=None):
+        response = unittest.mock.MagicMock()
+        response.cookies.get.return_value = wr_skey
+        response.headers.get.return_value = ""
+        return response
+
+    def _refresh_session(self, preferred_ql, responses):
+        session = object.__new__(self.bot.WeReadSessionManager)
+        session.user_config = None
+        session.user_name = "alice"
+        session.config = self.bot.WeReadConfig(
+            hack=self.bot.HackConfig(cookie_refresh_ql=preferred_ql)
+        )
+        session.http_client = FakeHttpClient(raw_responses=responses)
+        session.headers = {}
+        session.cookies = {"wr_skey": "old-key"}
+        return session
+
     def test_only_truthy_succ_and_synckey_is_success(self):
         cases = [
             ({"succ": True, "synckey": "key"}, True),
@@ -105,6 +123,93 @@ class ProtocolStateTests(unittest.IsolatedAsyncioTestCase):
             session.http_client.raw_calls[0]["json_data"],
             {"bookIds": ["current-book"]},
         )
+
+    async def test_cookie_refresh_uses_preferred_ql_first(self):
+        session = self._refresh_session(
+            True,
+            [(self._cookie_response("new-key"), 0.01)],
+        )
+
+        refreshed = await session._refresh_cookie()
+
+        self.assertTrue(refreshed)
+        self.assertEqual(session.cookies["wr_skey"], "new-key")
+        self.assertEqual(
+            session.http_client.raw_calls[0]["json_data"],
+            {"rq": "%2Fweb%2Fbook%2Fread", "ql": True},
+        )
+        self.assertEqual(len(session.http_client.raw_calls), 1)
+
+    async def test_cookie_refresh_falls_back_to_opposite_ql(self):
+        session = self._refresh_session(
+            False,
+            [
+                (self._cookie_response(), 0.01),
+                (self._cookie_response("new-key"), 0.01),
+            ],
+        )
+
+        refreshed = await session._refresh_cookie()
+
+        self.assertTrue(refreshed)
+        self.assertEqual(
+            [call["json_data"] for call in session.http_client.raw_calls],
+            [
+                {"rq": "%2Fweb%2Fbook%2Fread", "ql": False},
+                {"rq": "%2Fweb%2Fbook%2Fread", "ql": True},
+            ],
+        )
+
+    async def test_cookie_refresh_continues_after_request_error(self):
+        session = self._refresh_session(
+            False,
+            [
+                TimeoutError("offline"),
+                (self._cookie_response("new-key"), 0.01),
+            ],
+        )
+
+        with self.assertLogs(level="WARNING"):
+            refreshed = await session._refresh_cookie()
+
+        self.assertTrue(refreshed)
+        self.assertEqual(session.cookies["wr_skey"], "new-key")
+        self.assertEqual(len(session.http_client.raw_calls), 2)
+
+    async def test_cookie_refresh_falls_back_to_omitted_ql(self):
+        session = self._refresh_session(
+            True,
+            [
+                (self._cookie_response(), 0.01),
+                (self._cookie_response(), 0.01),
+                (self._cookie_response("new-key"), 0.01),
+            ],
+        )
+
+        refreshed = await session._refresh_cookie()
+
+        self.assertTrue(refreshed)
+        self.assertEqual(
+            session.http_client.raw_calls[-1]["json_data"],
+            {"rq": "%2Fweb%2Fbook%2Fread"},
+        )
+
+    async def test_cookie_refresh_fails_after_all_variants(self):
+        session = self._refresh_session(
+            False,
+            [
+                (self._cookie_response(), 0.01),
+                (self._cookie_response(), 0.01),
+                (self._cookie_response(), 0.01),
+            ],
+        )
+
+        with self.assertLogs(level="ERROR"):
+            refreshed = await session._refresh_cookie()
+
+        self.assertFalse(refreshed)
+        self.assertEqual(session.cookies["wr_skey"], "old-key")
+        self.assertEqual(len(session.http_client.raw_calls), 3)
 
 
 if __name__ == "__main__":

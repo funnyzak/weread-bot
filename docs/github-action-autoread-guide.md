@@ -49,7 +49,7 @@ curl 'https://weread.qq.com/web/book/read' -H 'cookie: wr_skey=user2; ...' --dat
 | `TARGET_DURATION` | 默认阅读时长，格式如 `5-10`；用于定时触发或手动触发留空时的默认值 | 1-2 |
 | `MAX_CONCURRENT_USERS` | 多用户并发数量（>=1） | 1 |
 | `MAX_CONSECUTIVE_FAILURES` | 单个用户连续阅读失败上限，达到后结束该会话 | 5 |
-| `HACK_COOKIE_REFRESH_QL` | Cookie 刷新兼容开关全局默认值，遇到刷新失败可切换 true/false | false |
+| `HACK_COOKIE_REFRESH_QL` | Cookie 刷新首选 `ql` 值，失败时自动尝试其他兼容形式 | false |
 | `NOTIFICATION_ONLY_ON_FAILURE` | 仅失败通知开关（true/false），覆盖 workflow 运行参数 | false |
 | `HISTORY_ENABLED` | 是否启用执行历史持久化 | true |
 | `HISTORY_FILE` | 执行历史输出路径 | logs/run-history.json |
@@ -156,15 +156,14 @@ curl 'https://weread.qq.com/web/book/read' -H 'cookie: wr_skey=user2; ...' --dat
 **Hack 配置（可选）**
 | Secret 名称 | 说明 | 默认值 |
 |------------|------|--------|
-| `HACK_COOKIE_REFRESH_QL` | Cookie刷新时ql属性值设置 | `false` |
+| `HACK_COOKIE_REFRESH_QL` | Cookie 刷新时首选的 `ql` 值 | `false` |
 
 > **Hack 配置说明：**
-> - `HACK_COOKIE_REFRESH_QL`: 控制Cookie刷新请求中的`ql`参数值，作为全局默认值
->   - `false` (默认): 使用`"ql": false`
->   - `true`: 使用`"ql": true`
-> - 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
-> - 如果遇到cookie刷新失败的问题，可以尝试切换此配置的值
-> - 建议先使用默认值，如果出现cookie相关错误再尝试修改
+> - `HACK_COOKIE_REFRESH_QL`: 控制 Cookie 刷新请求首选的 `ql` 参数值，作为全局默认值
+>   - `false` (默认): 优先使用 `"ql": false`
+>   - `true`: 优先使用 `"ql": true`
+> - 首选形式失败时，程序会自动尝试相反值和省略 `ql`
+> - 三种形式均失败时，需要重新获取登录 cURL
 > - GitHub Actions Secrets 只能设置全局默认值；如果多用户需要不同取值，请改用配置文件中的 `curl_config.users[].cookie_refresh_ql`
 
 ### 步骤 3: 启用 GitHub Actions
@@ -310,19 +309,17 @@ A: 当前 workflow 会在任务结束后上传 artifact，默认包含 `logs/wer
 
 ### Q: 遇到 Cookie 刷新失败怎么办？
 
-A: 这可能是 `cookie_refresh_ql` 配置问题：
-1. 在仓库 Settings → Secrets 中添加 `HACK_COOKIE_REFRESH_QL`
-2. 如果当前设置为 `false`，尝试设置为 `true`
-3. 如果当前设置为 `true`，尝试设置为 `false`
-4. 重新运行 Action 测试
-5. 如果是多用户且仅部分账号失败，请改用配置文件，为对应账号单独设置 `curl_config.users[].cookie_refresh_ql`
+A: 程序会按首选值、相反值和省略 `ql` 的顺序自动尝试。三种形式均失败时：
+1. 检查网络连接和 Action 日志中的认证错误
+2. 重新登录微信读书并获取最新 cURL
+3. 更新 `WEREAD_CURL_STRING` 后重新运行 Action
 
 ### Q: 如何判断是否需要调整 Hack 配置？
 
 A: 查看运行日志中的错误信息：
 - 搜索关键词：`cookie`、`refresh`、`ql`、`认证`
-- 如果看到 Cookie 相关错误，尝试调整 `HACK_COOKIE_REFRESH_QL` 配置
-- 如果只有某个账号失败，优先检查该账号是否需要单独设置 `curl_config.users[].cookie_refresh_ql`
+- 日志会显示每次尝试采用的 `ql` 形式
+- 三种形式均未返回 `wr_skey` 时，优先更新该账号的 cURL
 - 如果看到 401/403 认证错误，也可能是此配置问题
 
 ## 🔒 安全提示

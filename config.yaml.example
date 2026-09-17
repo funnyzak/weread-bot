@@ -21,7 +21,7 @@ curl_config:
     # 用户1：必填 name（用于日志与通知区分）、file_path（该用户的 CURL 命令文件路径）
     - name: "user1"                    # 示例：任意昵称，如 "张三"、"account_1"
       file_path: "user1_curl.txt"      # 示例：相对或绝对路径，如 "./curl/user1.txt"
-      cookie_refresh_ql: true          # 是否对该用户启用 Cookie 刷新时使用 ql 属性（默认 false，遇刷新失败可试 true）
+      cookie_refresh_ql: true          # 当前用户首选 ql 值；失败时会自动尝试其他兼容形式
       # 可选：用户特定的阅读参数覆盖
       reading_overrides:
         target_duration: "45-90"
@@ -233,9 +233,9 @@ notification:
 
 # Hack配置（用于解决特殊兼容性问题）
 hack:
-  # Cookie刷新时ql属性全局默认值
+  # Cookie刷新时首选的 ql 值
   # 多用户模式下可通过 curl_config.users[].cookie_refresh_ql 为单个用户覆盖
-  # 默认值：false，如果遇到cookie刷新失败的问题，可以尝试设置为true
+  # 刷新失败时会自动尝试相反值和不传 ql；三种形式均失败才判定 Cookie 失效
   cookie_refresh_ql: false
 
 # 定时任务配置（仅在 startup_mode 为 scheduled 时生效）
