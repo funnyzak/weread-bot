@@ -258,7 +258,7 @@ open config-generator.html
 | 多用户模式 | `curl_config.users` | 配置多个用户的CURL文件和个性化参数 |
 | 用户名称 | `curl_config.users[].name` | 用户标识名称 |
 | CURL文件 | `curl_config.users[].file_path` | 用户专属的CURL文件路径 |
-| Cookie刷新QL覆盖 | `curl_config.users[].cookie_refresh_ql` | 用户级 Cookie 刷新 `ql` 开关，未设置时沿用全局值 |
+| Cookie刷新QL覆盖 | `curl_config.users[].cookie_refresh_ql` | 用户级 Cookie 刷新首选 `ql` 值，未设置时沿用全局值 |
 | 个性化配置 | `curl_config.users[].reading_overrides` | 用户特定的阅读参数覆盖 |
 
 `curl_config.users[].reading_overrides` 当前支持的键：
@@ -273,9 +273,11 @@ open config-generator.html
 
 `curl_config.users[].cookie_refresh_ql` 仅支持布尔值：
 
-- `true`: 当前用户刷新 Cookie 时使用 `"ql": true`
-- `false`: 当前用户刷新 Cookie 时使用 `"ql": false`
+- `true`: 当前用户优先使用 `"ql": true`
+- `false`: 当前用户优先使用 `"ql": false`
 - 不填写: 沿用全局 `hack.cookie_refresh_ql`
+
+首选形式未返回 `wr_skey` 时，程序会继续尝试相反的 `ql` 值和省略 `ql`。三种形式均失败时，才会判定 Cookie 无法刷新。
 
 
 ### 应用配置
@@ -328,28 +330,27 @@ Hack配置用于解决特殊兼容性问题，包含以下选项：
 
 | 配置项 | 环境变量 | 默认值 | 说明 |
 |--------|----------|--------|------|
-| Cookie刷新QL属性 | `HACK_COOKIE_REFRESH_QL` | `false` | Cookie刷新时ql属性值设置 |
+| Cookie刷新QL属性 | `HACK_COOKIE_REFRESH_QL` | `false` | Cookie 刷新时首选的 `ql` 值 |
 
 **详细说明：**
-- `cookie_refresh_ql`: 控制Cookie刷新请求中的`ql`参数值，作为全局默认值
-  - `false` (默认): 使用`"ql": false`
-  - `true`: 使用`"ql": true`
+- `cookie_refresh_ql`: 控制 Cookie 刷新请求首选的 `ql` 参数值，作为全局默认值
+  - `false` (默认): 优先使用 `"ql": false`
+  - `true`: 优先使用 `"ql": true`
 - 多用户模式下，可通过 `curl_config.users[].cookie_refresh_ql` 为单个用户覆盖该值
 - 环境变量 `HACK_COOKIE_REFRESH_QL` 只能设置全局默认值，不能为不同用户分别设置
-- 根据不同用户的环境，可能需要设置为True或False来确保cookie刷新正常工作
-- 如果遇到cookie刷新失败的问题，可以尝试切换此配置的值
+- 首选形式失败时，程序会自动尝试相反值和省略 `ql`
 
 **使用场景：**
 ```yaml
 # config.yaml 示例
 hack:
-  cookie_refresh_ql: false  # 全局默认值
+  cookie_refresh_ql: false  # 全局首选值
 
 curl_config:
   users:
     - name: "user1"
       file_path: "user1_curl.txt"
-      cookie_refresh_ql: true  # 仅覆盖该用户
+      cookie_refresh_ql: true  # 仅覆盖该用户的首选值
 ```
 
 ### 执行历史配置
@@ -850,7 +851,7 @@ curl_config:
   users:
     - name: "用户1"                    # 用户标识名称
       file_path: "user1_curl.txt"      # 用户专属的CURL文件路径
-      cookie_refresh_ql: true          # 可选：覆盖全局 hack.cookie_refresh_ql
+      cookie_refresh_ql: true          # 可选：覆盖全局首选 ql 值
       reading_overrides:               # 用户特定的阅读参数覆盖（可选）
         target_duration: "45-90"       # 阅读时长
         mode: "smart_random"           # 阅读模式
@@ -869,7 +870,7 @@ curl_config:
 **多用户执行特性：**
 
 - **可控并发**：通过 `MAX_CONCURRENT_USERS` 控制同时在线的账号数量，默认1表示顺序执行
-- **独立配置**：每个用户可以有不同的阅读策略、时长和 Cookie 刷新 `ql` 开关
+- **独立配置**：每个用户可以有不同的阅读策略、时长和 Cookie 刷新首选 `ql` 值
 - **错误隔离**：单个用户失败不影响其他用户执行
 - **统计汇总**：提供单用户和多用户的详细统计报告，包含成功、失败、跳过和失败分类汇总
 
@@ -1121,7 +1122,7 @@ notification:
 - 重新获取最新的CURL命令
 - 确保微信读书账号未过期
 - 检查网络连接是否正常
-- 尝试重启程序让Cookie自动刷新
+- 程序会自动尝试三种 `ql` 参数形式；全部失败时请重新获取 cURL
 
 ### Q: 支持多账号同时运行吗？
 
@@ -1145,7 +1146,7 @@ curl_config:
 **执行特点：**
 - 通过 `MAX_CONCURRENT_USERS` 控制是否并发执行（默认1则顺序执行）
 - 单个账号失败不影响其他账号
-- 每个账号可独立设置 `cookie_refresh_ql`
+- 每个账号可独立设置首选的 `cookie_refresh_ql`
 - 提供详细的多用户统计报告
 
 **传统方式（并行运行）：**
