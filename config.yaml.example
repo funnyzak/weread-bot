@@ -13,6 +13,7 @@ app:
 
 # CURL 配置（支持单用户和多用户模式）
 curl_config:
+  # Cookie 刷新成功后，来自文件的 CURL 会被原子写回新的 wr_skey（文件只读时自动跳过）
   # 单用户模式：从文件读取 CURL bash 命令。多用户模式下此项无效；若同时配置单用户与多用户，优先多用户。
   file_path: "curl_command.txt"   # 示例：curl_command.txt、./cookies/me.txt（浏览器复制为 cURL 后保存）
 

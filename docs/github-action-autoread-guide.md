@@ -314,6 +314,10 @@ A: 程序会按首选值、相反值和省略 `ql` 的顺序自动尝试。三�
 2. 重新登录微信读书并获取最新 cURL
 3. 更新 `WEREAD_CURL_STRING` 后重新运行 Action
 
+### Q: Cookie 刷新成功后会写回文件吗？
+
+A: Actions 里 CURL 来自 Secret（`WEREAD_CURL_STRING`），没有对应的 CURL 文件，程序只更新内存中的 Cookie，不会写任何文件。即使改用 `curl_config.file_path` 指向仓库内文件，也需要在下一步里提交并推送才能保存到仓库。因此 Secret 里的 Cookie 过期后仍需手动重新抓取并更新。
+
 ### Q: 如何判断是否需要调整 Hack 配置？
 
 A: 查看运行日志中的错误信息：

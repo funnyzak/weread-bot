@@ -126,7 +126,7 @@ history:
   file: "/ql/data/log/weread-bot/run-history.json"
 ```
 
-`WEREAD_USER1_CURL` 等名称由你自定义，必须与 YAML 引用一致；脚本不会自动扫描这些变量。只保留一个 `users` 条目，也可以用于单用户自定义配置。如偏好文件，将该用户的 `content` 替换为 `file_path: "/ql/data/config/weread-user1.txt"`，再把该账号的完整 cURL 保存到对应文件。
+`WEREAD_USER1_CURL` 等名称由你自定义，必须与 YAML 引用一致；脚本不会自动扫描这些变量。只保留一个 `users` 条目，也可以用于单用户自定义配置。如偏好文件，将该用户的 `content` 替换为 `file_path: "/ql/data/config/weread-user1.txt"`，再把该账号的完整 cURL 保存到对应文件。Cookie 刷新成功后，程序会把新的 `wr_skey` 原子写回该文件（`/ql/data` 可写时），需要在面板里手动更新 Cookie 的场景会少很多。
 
 配置生效规则：
 

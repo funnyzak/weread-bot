@@ -1611,15 +1611,96 @@ def load_curl_source(
     file_path: str, inline_content: str, path: str
 ) -> str:
     """按文件优先、内嵌内容回退的规则读取 CURL。"""
+    content, _ = load_curl_source_with_origin(file_path, inline_content, path)
+    return content
+
+
+def load_curl_source_with_origin(
+    file_path: str, inline_content: str, path: str
+) -> Tuple[str, Optional[str]]:
+    """读取 CURL 内容，并返回实际来源文件（内嵌内容或空文件时为 None）。"""
     if file_path and Path(file_path).exists():
         try:
-            return Path(file_path).read_text(encoding="utf-8").strip()
+            content = Path(file_path).read_text(encoding="utf-8").strip()
         except OSError as exc:
             raise ConfigError(
                 f"{path}.file_path: CURL 文件无法读取，"
                 f"当前值={file_path!r}"
             ) from exc
-    return str(inline_content or "").strip()
+        return (content, file_path) if content else ("", None)
+    return str(inline_content or "").strip(), None
+
+
+def merge_cookie_string(cookie_string: str, name: str, value: str) -> str:
+    """在分号分隔的 cookie 串里更新指定项，缺失时追加。"""
+    pattern = re.compile(
+        rf"(^\s*|;\s*){re.escape(name)}\s*=\s*[^;]*", re.IGNORECASE
+    )
+    if pattern.search(cookie_string):
+        return pattern.sub(
+            lambda match: f"{match.group(1)}{name}={value}",
+            cookie_string,
+            count=1,
+        )
+    if cookie_string.strip():
+        return f"{cookie_string}; {name}={value}"
+    return f"{name}={value}"
+
+
+def update_curl_cookie_value(
+    curl_text: str, name: str, value: str
+) -> Optional[str]:
+    """更新 CURL 文本中 Cookie 头或 -b 参数里某个 cookie 的值。
+
+    只替换目标项，其余内容保持原样；未找到 cookie 位置时返回 None。
+    """
+    forms = (
+        r"(-H\s+['\"]Cookie:\s*)([^'\"]*)(['\"])",
+        r"(-b\s+['\"])([^'\"]*)(['\"])",
+    )
+    updated = False
+    for pattern in forms:
+        match = re.search(pattern, curl_text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        merged = merge_cookie_string(match.group(2), name, value)
+        curl_text = (
+            f"{curl_text[:match.start()]}{match.group(1)}{merged}"
+            f"{match.group(3)}{curl_text[match.end():]}"
+        )
+        updated = True
+    return curl_text if updated else None
+
+
+def write_curl_file_atomically(
+    source_path: Union[str, Path], content: str
+) -> bool:
+    """以临时文件替换的方式写回 CURL 文件，失败时仅记录警告。"""
+    target = Path(source_path)
+    temp_path: Optional[Path] = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_fp:
+            temp_path = Path(temp_fp.name)
+            temp_fp.write(content)
+
+        os.replace(temp_path, target)
+        return True
+    except Exception as exc:
+        logging.warning(f"⚠️ Cookie 写回文件失败，已跳过持久化: {exc}")
+        if temp_path and temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+        return False
 
 
 class RateLimiter:
@@ -3370,6 +3451,9 @@ class WeReadSessionManager:
     RENEW_URL = "https://weread.qq.com/web/login/renewal"
     FIX_SYNCKEY_URL = "https://weread.qq.com/web/book/chapterInfos"
 
+    # Cookie 来源文件路径；None 表示来自内嵌内容或环境变量
+    _curl_source_file: Optional[str] = None
+
     # 默认请求数据
     DEFAULT_DATA = {
         "appId": "app_id",  # 应用的唯一标识符
@@ -3481,12 +3565,15 @@ class WeReadSessionManager:
     def _load_curl_config(self):
         """加载CURL配置"""
         curl_content = ""
+        self._curl_source_file = None
 
         if self.user_config:
-            curl_content = load_curl_source(
-                self.user_config.file_path,
-                self.user_config.content,
-                f"curl_config.users.{self.user_name}",
+            curl_content, self._curl_source_file = (
+                load_curl_source_with_origin(
+                    self.user_config.file_path,
+                    self.user_config.content,
+                    f"curl_config.users.{self.user_name}",
+                )
             )
             if curl_content:
                 logging.info(
@@ -3494,10 +3581,12 @@ class WeReadSessionManager:
                 )
 
         if not curl_content:
-            curl_content = load_curl_source(
-                self.config.curl_file_path,
-                self.config.curl_content,
-                "curl_config",
+            curl_content, self._curl_source_file = (
+                load_curl_source_with_origin(
+                    self.config.curl_file_path,
+                    self.config.curl_content,
+                    "curl_config",
+                )
             )
             if curl_content:
                 logging.info("✅ 已加载全局 CURL 配置")
@@ -4075,6 +4164,7 @@ class WeReadSessionManager:
                 ql_value,
                 _secret_marker(new_skey),
             )
+            self._persist_renewed_cookie(new_skey)
             return True
 
         logging.error(
@@ -4084,6 +4174,33 @@ class WeReadSessionManager:
             )
         )
         return False
+
+    def _persist_renewed_cookie(self, new_skey: str) -> None:
+        """CURL 来源为文件时，把续期后的 wr_skey 原子写回该文件。"""
+        source_file = self._curl_source_file
+        if not source_file:
+            return
+
+        try:
+            original = Path(source_file).read_text(encoding="utf-8")
+        except OSError as exc:
+            logging.warning(
+                "⚠️ Cookie 写回跳过，无法读取 %s: %s", source_file, exc
+            )
+            return
+
+        updated = update_curl_cookie_value(original, "wr_skey", new_skey)
+        if updated is None:
+            logging.warning(
+                "⚠️ Cookie 写回跳过，%s 中未找到 Cookie 头或 -b 参数",
+                source_file,
+            )
+            return
+        if updated == original:
+            return
+
+        if write_curl_file_atomically(source_file, updated):
+            logging.info("✅ Cookie 已原子写回 %s", source_file)
 
     async def _fix_no_synckey(self):
         """修复synckey问题
